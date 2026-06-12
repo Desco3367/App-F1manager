@@ -1937,11 +1937,38 @@ function awardTotals(items) {
 
 function currentRaceWindow() {
   const season = cache.season || window.LFM_SEED.season;
-  return season.currentRaceWindow || {};
+  const raceWindow = season.currentRaceWindow || {};
+  const hasRace = Boolean(raceWindow.raceId);
+  const selectionOpen = hasRace && Boolean(raceWindow.selectionOpen || raceWindow.isOpen);
+  const developmentOpen = hasRace && Boolean(raceWindow.developmentOpen);
+  return {
+    ...raceWindow,
+    developmentOpen,
+    selectionOpen,
+    isOpen: selectionOpen
+  };
+}
+
+function isDevelopmentWindowOpen() {
+  return Boolean(currentRaceWindow().developmentOpen && currentRaceWindow().raceId);
+}
+
+function isSelectionWindowOpen() {
+  return Boolean(currentRaceWindow().selectionOpen && currentRaceWindow().raceId);
+}
+
+function isAnyCarWindowOpen() {
+  return isDevelopmentWindowOpen() || isSelectionWindowOpen();
 }
 
 function isRaceWindowOpen() {
-  return Boolean(currentRaceWindow().isOpen && currentRaceWindow().raceId);
+  return isSelectionWindowOpen();
+}
+
+function currentCarWindowStatusText() {
+  if (isDevelopmentWindowOpen()) return "Mejoras";
+  if (isSelectionWindowOpen()) return "Seleccion";
+  return "Cerrado";
 }
 
 function currentRaceWindowLabel() {
@@ -3753,8 +3780,8 @@ function renderAdmin() {
 
     <article class="card" data-admin-panel="carreras">
       <div class="card-header">
-        <h3>Plazo de GP</h3>
-        <span class="pill ${isRaceWindowOpen() ? "done-pill" : ""}">${isRaceWindowOpen() ? "Abierto" : "Cerrado"}</span>
+        <h3>Plazos de coche del GP</h3>
+        <span class="pill ${isAnyCarWindowOpen() ? "done-pill" : ""}">${html(currentCarWindowStatusText())}</span>
       </div>
       ${renderRaceWindowAdmin()}
     </article>
@@ -4140,8 +4167,10 @@ function renderAdmin() {
   document.querySelectorAll("[data-delete-personnel]").forEach((button) => {
     button.addEventListener("click", deletePersonnelEntry);
   });
-  $("raceWindowForm").addEventListener("submit", openRaceWindow);
-  $("closeRaceWindowBtn").addEventListener("click", closeRaceWindowAndApply);
+  $("openDevelopmentWindowBtn")?.addEventListener("click", openDevelopmentWindow);
+  $("closeDevelopmentWindowBtn")?.addEventListener("click", closeDevelopmentWindow);
+  $("openSelectionWindowBtn")?.addEventListener("click", openSelectionWindow);
+  $("closeRaceWindowBtn")?.addEventListener("click", closeRaceWindowAndApply);
   $("awardSettingsForm").addEventListener("submit", saveAwardSettings);
   $("raceAwardForm").addEventListener("submit", applyRaceAwards);
   $("awardPreviewBtn").addEventListener("click", updateRaceAwardPreview);
@@ -5342,7 +5371,7 @@ function renderPendingEngineImport(teams) {
 
 function renderCarRequestHistory(teamId) {
   const requests = carRequests(teamId);
-  const raceWindowOpen = isRaceWindowOpen();
+  const developmentOpen = isDevelopmentWindowOpen();
   if (!requests.length) {
     return `<div class="empty">Todavia no hay solicitudes de mejora.</div>`;
   }
@@ -5372,8 +5401,8 @@ function renderCarRequestHistory(teamId) {
                   type="button"
                   class="ghost danger-action"
                   data-cancel-team-car-request="${html(request.id)}"
-                  ${raceWindowOpen ? "" : "disabled"}
-                >${raceWindowOpen ? "Arrepentirse" : "Plazo cerrado"}</button>
+                  ${developmentOpen ? "" : "disabled"}
+                >${developmentOpen ? "Arrepentirse" : "Mejoras cerradas"}</button>
               </div>
             ` : ""}
           </article>
@@ -5384,11 +5413,11 @@ function renderCarRequestHistory(teamId) {
 }
 
 function renderTeamCarRequestPanel(teamId) {
-  const raceWindowOpen = isRaceWindowOpen();
+  const developmentOpen = isDevelopmentWindowOpen();
   const pending = pendingCarRequests(teamId);
   const pendingPieces = new Set(pending.map((request) => request.pieceId));
   const firstAvailablePiece = carPieces().find((piece) => !pendingPieces.has(piece.id));
-  const blocked = !raceWindowOpen || pending.length >= 4 || !firstAvailablePiece;
+  const blocked = !developmentOpen || pending.length >= 4 || !firstAvailablePiece;
 
   return `
     <section class="car-request-panel">
@@ -5424,9 +5453,9 @@ function renderTeamCarRequestPanel(teamId) {
         <button type="submit" ${blocked ? "disabled" : ""}>Enviar solicitud</button>
         <p id="teamCarRequestMessage" class="message"></p>
       </form>
-      ${!raceWindowOpen ? `<p class="warning-text">El plazo de GP esta cerrado.</p>` : ""}
+      ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
       ${pending.length >= 4 ? `<p class="warning-text">Ya tienes 4 solicitudes pendientes.</p>` : ""}
-      ${raceWindowOpen && !firstAvailablePiece ? `<p class="warning-text">Todas las piezas tienen una solicitud pendiente.</p>` : ""}
+      ${developmentOpen && !firstAvailablePiece ? `<p class="warning-text">Todas las piezas tienen una solicitud pendiente.</p>` : ""}
       ${renderCarRequestHistory(teamId)}
     </section>
   `;
@@ -5442,7 +5471,7 @@ function renderTeamCar(teamId) {
   const selected = selection.selectedDesignIds || {};
   const active = car.activeDesignIds || {};
   const hasAnyDesign = carPieces().some((piece) => designsForPiece(teamId, piece.id).length);
-  const raceWindowOpen = isRaceWindowOpen();
+  const selectionOpen = isSelectionWindowOpen();
   const windowLabel = currentRaceWindowLabel();
 
   if (!hasAnyDesign) {
@@ -5457,9 +5486,9 @@ function renderTeamCar(teamId) {
   return `
     ${renderTeamCarRequestPanel(teamId)}
     <form id="teamCarForm" class="form">
-      <div class="race-window-status ${raceWindowOpen ? "open" : ""}">
+      <div class="race-window-status ${selectionOpen ? "open" : ""}">
         <span>Plazo de seleccion</span>
-        <strong>${raceWindowOpen ? `Abierto para ${html(windowLabel)}` : "Cerrado"}</strong>
+        <strong>${selectionOpen ? `Abierto para ${html(windowLabel)}` : "Cerrado"}</strong>
       </div>
       <div class="next-car-name-box">
         <label>Nombre del coche para proxima temporada
@@ -5501,7 +5530,7 @@ function renderTeamCar(teamId) {
             <div class="car-piece-layout">
               <div class="car-control-panel">
                 <label>Elegir diseno
-                  <select data-car-piece="${html(piece.id)}" ${designs.length && raceWindowOpen ? "" : "disabled"}>
+                  <select data-car-piece="${html(piece.id)}" ${designs.length && selectionOpen ? "" : "disabled"}>
                     <option value="">Sin pieza</option>
                     ${designs.map((design) => `
                       <option value="${html(design.id)}" ${design.id === currentId ? "selected" : ""}>
@@ -5537,7 +5566,7 @@ function renderTeamCar(teamId) {
         `;
       }).join("")}
 
-      <button type="submit" ${raceWindowOpen ? "" : "disabled"}>Guardar seleccion de coche</button>
+      <button type="submit" ${selectionOpen ? "" : "disabled"}>Guardar seleccion de coche</button>
       <p id="teamCarMessage" class="message"></p>
     </form>
   `;
@@ -5885,19 +5914,24 @@ function renderRaceWindowAdmin() {
   const raceWindow = currentRaceWindow();
   const suggestedRace = races.find((race) => !race.completed) || races[0];
   const selectedRaceId = raceWindow.raceId || suggestedRace?.id || "";
+  const developmentOpen = isDevelopmentWindowOpen();
+  const selectionOpen = isSelectionWindowOpen();
+  const anyOpen = isAnyCarWindowOpen();
+  const pendingRequests = allPendingCarRequests(cache.teams.length ? cache.teams : window.LFM_SEED.teams || []);
+  const pendingCount = pendingRequests.length;
 
   if (!races.length) {
     return `<div class="empty">Todavia no hay calendario cargado.</div>`;
   }
 
   return `
-    <form id="raceWindowForm" class="form race-window-panel">
-      <div class="race-window-status ${raceWindow.isOpen ? "open" : ""}">
+    <section class="form race-window-panel">
+      <div class="race-window-status ${anyOpen ? "open" : ""}">
         <span>Estado actual</span>
-        <strong>${raceWindow.isOpen ? `Abierto: ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
+        <strong>${anyOpen ? `${html(currentCarWindowStatusText())}: ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
       </div>
       <label>Ronda
-        <select id="raceWindowRace" ${raceWindow.isOpen ? "disabled" : ""}>
+        <select id="raceWindowRace" ${anyOpen ? "disabled" : ""}>
           ${races.map((race) => `
             <option value="${html(race.id)}" ${race.id === selectedRaceId ? "selected" : ""}>
               ${html(raceLabel(race))}
@@ -5905,12 +5939,25 @@ function renderRaceWindowAdmin() {
           `).join("")}
         </select>
       </label>
+      <section class="grid two flat-grid">
+        <div class="race-window-status ${developmentOpen ? "open" : ""}">
+          <span>Plazo de mejoras</span>
+          <strong>${developmentOpen ? `Abierto para ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
+        </div>
+        <div class="race-window-status ${selectionOpen ? "open" : ""}">
+          <span>Plazo de seleccion</span>
+          <strong>${selectionOpen ? `Abierto para ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
+        </div>
+      </section>
       <div class="button-row">
-        <button type="submit" ${raceWindow.isOpen ? "disabled" : ""}>Abrir plazo</button>
-        <button id="closeRaceWindowBtn" class="ghost" type="button" ${raceWindow.isOpen ? "" : "disabled"}>Cerrar y aplicar selecciones</button>
+        <button id="openDevelopmentWindowBtn" type="button" ${anyOpen ? "disabled" : ""}>Abrir mejoras</button>
+        <button id="closeDevelopmentWindowBtn" class="ghost" type="button" ${developmentOpen ? "" : "disabled"}>Cerrar mejoras</button>
+        <button id="openSelectionWindowBtn" type="button" ${anyOpen || pendingCount ? "disabled" : ""}>Abrir seleccion</button>
+        <button id="closeRaceWindowBtn" class="ghost" type="button" ${selectionOpen ? "" : "disabled"}>Cerrar seleccion y aplicar</button>
       </div>
+      ${pendingCount ? `<p class="warning-text">No puedes abrir seleccion: quedan ${html(pendingCount)} solicitudes pendientes.</p>` : ""}
       <p id="raceWindowMessage" class="message"></p>
-    </form>
+    </section>
   `;
 }
 
@@ -7891,6 +7938,7 @@ function renderAdminCarRequestQueue(teams) {
         </div>
         <span class="pill">${html(pending.length)} pendientes</span>
       </div>
+      ${pending.length ? `<p class="warning-text">La seleccion no puede abrirse hasta resolver o cancelar estas solicitudes.</p>` : ""}
       ${pending.length ? `
         <div class="car-request-admin-list">
           ${pending.map(({ team, request }) => {
@@ -7936,11 +7984,12 @@ function renderAdminCarDesignPanel(teams) {
 }
 
 function renderAdminCarSelectionsPanel(teams) {
+  const selectionOpen = isSelectionWindowOpen();
   return `
     <section class="admin-car-selections">
-      <div class="race-window-status ${isRaceWindowOpen() ? "open" : ""}">
+      <div class="race-window-status ${selectionOpen ? "open" : ""}">
         <span>Plazo de seleccion</span>
-        <strong>${isRaceWindowOpen() ? `Abierto para ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
+        <strong>${selectionOpen ? `Abierto para ${html(currentRaceWindowLabel())}` : "Cerrado"}</strong>
       </div>
       <p class="muted">Revisa equipado vs seleccionado. Aplicar seleccion cobra fabricacion solo por piezas cambiadas.</p>
       ${renderAdminCarOverview(teams)}
@@ -8743,6 +8792,8 @@ async function createSeason(event) {
       currentRaceWindow: {
         raceId: "",
         label: "",
+        developmentOpen: false,
+        selectionOpen: false,
         isOpen: false
       },
       aliases: cache.season?.aliases || window.LFM_SEED.season?.aliases || {},
@@ -8822,33 +8873,113 @@ async function createSeason(event) {
   }
 }
 
-async function openRaceWindow(event) {
-  event.preventDefault();
-  const stop = setLoading(event.submitter, "Abriendo...");
+function selectedRaceWindowRace() {
+  const races = cache.calendar.length ? cache.calendar : window.LFM_SEED.calendar || [];
+  const raceId = $("raceWindowRace")?.value || currentRaceWindow().raceId;
+  const race = races.find((item) => item.id === raceId);
+  if (!race) throw new Error("Carrera no encontrada.");
+  return race;
+}
+
+async function openDevelopmentWindow(event) {
+  const stop = setLoading(event.currentTarget, "Abriendo...");
   showMessage($("raceWindowMessage"), "");
   try {
-    if (isRaceWindowOpen()) {
-      throw new Error("Ya hay un plazo abierto.");
+    if (isAnyCarWindowOpen()) {
+      throw new Error("Ya hay un plazo de coche abierto.");
     }
 
-    const raceId = $("raceWindowRace").value;
-    const race = (cache.calendar.length ? cache.calendar : window.LFM_SEED.calendar || [])
-      .find((item) => item.id === raceId);
-    if (!race) throw new Error("Carrera no encontrada.");
+    const race = selectedRaceWindowRace();
 
     await db.collection("lfm_seasons").doc(activeSeasonId()).set({
       currentRaceWindow: {
-        raceId,
+        raceId: race.id,
         label: raceLabel(race),
-        isOpen: true,
-        openedByUid: currentUser.uid,
-        openedByEmail: currentUser.email,
-        openedAt: firebase.firestore.FieldValue.serverTimestamp()
+        developmentOpen: true,
+        selectionOpen: false,
+        isOpen: false,
+        developmentOpenedByUid: currentUser.uid,
+        developmentOpenedByEmail: currentUser.email,
+        developmentOpenedAt: firebase.firestore.FieldValue.serverTimestamp()
       },
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 
-    showMessage($("raceWindowMessage"), `Plazo abierto para ${raceLabel(race)}.`, "success");
+    showMessage($("raceWindowMessage"), `Plazo de mejoras abierto para ${raceLabel(race)}.`, "success");
+    await loadPublicData();
+    render();
+  } catch (error) {
+    showMessage($("raceWindowMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function closeDevelopmentWindow(event) {
+  const stop = setLoading(event.currentTarget, "Cerrando...");
+  showMessage($("raceWindowMessage"), "");
+  try {
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("No hay un plazo de mejoras abierto.");
+    }
+
+    const raceWindow = currentRaceWindow();
+    await db.collection("lfm_seasons").doc(activeSeasonId()).set({
+      currentRaceWindow: {
+        ...raceWindow,
+        developmentOpen: false,
+        selectionOpen: false,
+        isOpen: false,
+        developmentClosedByUid: currentUser.uid,
+        developmentClosedByEmail: currentUser.email,
+        developmentClosedAt: firebase.firestore.FieldValue.serverTimestamp()
+      },
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    showMessage($("raceWindowMessage"), `Plazo de mejoras cerrado para ${currentRaceWindowLabel()}.`, "success");
+    await loadPublicData();
+    render();
+  } catch (error) {
+    showMessage($("raceWindowMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function openSelectionWindow(event) {
+  const stop = setLoading(event.currentTarget, "Abriendo...");
+  showMessage($("raceWindowMessage"), "");
+  try {
+    if (isAnyCarWindowOpen()) {
+      throw new Error("Ya hay un plazo de coche abierto.");
+    }
+
+    const pendingCount = allPendingCarRequests(cache.teams).length;
+    if (pendingCount) {
+      throw new Error(`No puedes abrir seleccion: quedan ${pendingCount} solicitudes pendientes.`);
+    }
+
+    const race = selectedRaceWindowRace();
+    const previous = currentRaceWindow();
+    const sameRace = previous.raceId === race.id;
+
+    await db.collection("lfm_seasons").doc(activeSeasonId()).set({
+      currentRaceWindow: {
+        ...(sameRace ? previous : {}),
+        raceId: race.id,
+        label: raceLabel(race),
+        developmentOpen: false,
+        selectionOpen: true,
+        isOpen: true,
+        selectionOpenedByUid: currentUser.uid,
+        selectionOpenedByEmail: currentUser.email,
+        selectionOpenedAt: firebase.firestore.FieldValue.serverTimestamp()
+      },
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    showMessage($("raceWindowMessage"), `Plazo de seleccion abierto para ${raceLabel(race)}.`, "success");
     await loadPublicData();
     render();
   } catch (error) {
@@ -8863,12 +8994,12 @@ async function closeRaceWindowAndApply(event) {
   const stop = setLoading(button, "Cerrando...");
   showMessage($("raceWindowMessage"), "");
   try {
-    if (!isRaceWindowOpen()) {
-      throw new Error("No hay un plazo abierto.");
+    if (!isSelectionWindowOpen()) {
+      throw new Error("No hay un plazo de seleccion abierto.");
     }
 
     const raceWindow = currentRaceWindow();
-    const ok = window.confirm(`Cerrar ${currentRaceWindowLabel()} y aplicar selecciones de todos los equipos?`);
+    const ok = window.confirm(`Cerrar seleccion de ${currentRaceWindowLabel()} y aplicar selecciones de todos los equipos?`);
     if (!ok) {
       showMessage($("raceWindowMessage"), "Cierre cancelado.");
       return;
@@ -8892,7 +9023,12 @@ async function closeRaceWindowAndApply(event) {
     await db.collection("lfm_seasons").doc(activeSeasonId()).set({
       currentRaceWindow: {
         ...raceWindow,
+        developmentOpen: false,
+        selectionOpen: false,
         isOpen: false,
+        selectionClosedByUid: currentUser.uid,
+        selectionClosedByEmail: currentUser.email,
+        selectionClosedAt: firebase.firestore.FieldValue.serverTimestamp(),
         closedByUid: currentUser.uid,
         closedByEmail: currentUser.email,
         closedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -10302,8 +10438,8 @@ async function saveTeamCarRequest(event) {
   const stop = setLoading(event.submitter, "Enviando...");
   showMessage($("teamCarRequestMessage"), "");
   try {
-    if (!isRaceWindowOpen()) {
-      throw new Error("El plazo de seleccion esta cerrado.");
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
     }
 
     const teamId = currentProfile?.teamId;
@@ -10373,8 +10509,8 @@ async function cancelTeamCarRequest(event) {
   const stop = setLoading(event.currentTarget, "Cancelando...");
   showMessage($("teamCarRequestMessage"), "");
   try {
-    if (!isRaceWindowOpen()) {
-      throw new Error("El plazo de seleccion esta cerrado.");
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
     }
 
     const teamId = currentProfile?.teamId;
@@ -10430,7 +10566,7 @@ async function saveTeamCarSelection(event) {
   const stop = setLoading(event.submitter, "Guardando...");
   showMessage($("teamCarMessage"), "");
   try {
-    if (!isRaceWindowOpen()) {
+    if (!isSelectionWindowOpen()) {
       throw new Error("El plazo de seleccion esta cerrado.");
     }
 
@@ -10665,7 +10801,7 @@ async function applyCarSelection(event) {
   const stop = setLoading(button, "Aplicando...");
   showMessage($("carApplyMessage"), "");
   try {
-    const result = await applySelectionForTeam(teamId, isRaceWindowOpen() ? currentRaceWindow() : null);
+    const result = await applySelectionForTeam(teamId, isSelectionWindowOpen() ? currentRaceWindow() : null);
     showMessage(
       $("carApplyMessage"),
       result.skipped

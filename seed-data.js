@@ -10,6 +10,8 @@ window.LFM_SEED = {
     currentRaceWindow: {
       raceId: "",
       label: "",
+      developmentOpen: false,
+      selectionOpen: false,
       isOpen: false
     },
     aliases: {
