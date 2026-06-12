@@ -3264,6 +3264,9 @@ function renderTeam() {
   $("teamCarRequestForm")?.addEventListener("submit", saveTeamCarRequest);
   $("teamCarRequestMode")?.addEventListener("change", updateTeamCarRequestUpgradeOptions);
   $("teamCarRequestPiece")?.addEventListener("change", updateTeamCarRequestUpgradeOptions);
+  document.querySelectorAll("[data-cancel-team-car-request]").forEach((button) => {
+    button.addEventListener("click", cancelTeamCarRequest);
+  });
   updateTeamCarRequestUpgradeOptions();
   $("teamCarForm")?.addEventListener("submit", saveTeamCarSelection);
   $("saveNextCarNameBtn")?.addEventListener("click", saveNextCarName);
@@ -5339,6 +5342,7 @@ function renderPendingEngineImport(teams) {
 
 function renderCarRequestHistory(teamId) {
   const requests = carRequests(teamId);
+  const raceWindowOpen = isRaceWindowOpen();
   if (!requests.length) {
     return `<div class="empty">Todavia no hay solicitudes de mejora.</div>`;
   }
@@ -5362,6 +5366,16 @@ function renderCarRequestHistory(teamId) {
               ${request.resolvedDesignName ? ` - Resultado: ${html(request.resolvedDesignName)}` : ""}
               ${request.cancelReason ? ` - Motivo: ${html(request.cancelReason)}` : ""}
             </small>
+            ${request.status === "pending" ? `
+              <div class="request-actions">
+                <button
+                  type="button"
+                  class="ghost danger-action"
+                  data-cancel-team-car-request="${html(request.id)}"
+                  ${raceWindowOpen ? "" : "disabled"}
+                >${raceWindowOpen ? "Arrepentirse" : "Plazo cerrado"}</button>
+              </div>
+            ` : ""}
           </article>
         `;
       }).join("")}
@@ -10345,6 +10359,63 @@ async function saveTeamCarRequest(event) {
     });
 
     showMessage($("teamCarRequestMessage"), "Solicitud enviada. El admin cargara el resultado.", "success");
+    await loadCarData();
+    render();
+  } catch (error) {
+    showMessage($("teamCarRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelTeamCarRequest(event) {
+  const requestId = event.currentTarget.dataset.cancelTeamCarRequest || "";
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("teamCarRequestMessage"), "");
+  try {
+    if (!isRaceWindowOpen()) {
+      throw new Error("El plazo de seleccion esta cerrado.");
+    }
+
+    const teamId = currentProfile?.teamId;
+    if (!teamId) throw new Error("Perfil sin equipo.");
+    if (!requestId) throw new Error("Solicitud no encontrada.");
+
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.carRequests) ? data.carRequests : [];
+      const index = requests.findIndex((request) => (
+        request.id === requestId
+        && request.seasonId === activeSeasonId()
+        && request.status === "pending"
+      ));
+
+      if (index < 0) throw new Error("Solicitud no encontrada o ya resuelta.");
+
+      const nextRequests = requests.map((request, requestIndex) => (
+        requestIndex === index
+          ? {
+              ...request,
+              status: "cancelled",
+              cancelReason: "Cancelada por el equipo",
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        carRequests: nextRequests,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    showMessage($("teamCarRequestMessage"), "Solicitud cancelada. La pieza queda libre para otro pedido.", "success");
     await loadCarData();
     render();
   } catch (error) {
