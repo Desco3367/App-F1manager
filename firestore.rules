@@ -1,0 +1,171 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email in ["admin@manager.local", "Admin@manager.local"];
+    }
+
+    function hasProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/lfm_users/$(request.auth.uid));
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/lfm_users/$(request.auth.uid)).data;
+    }
+
+    function isTeamUser(teamId) {
+      return hasProfile() && profile().teamId == teamId;
+    }
+
+    function canVotePredictions() {
+      return hasProfile() && profile().role in ["manager", "predictor"];
+    }
+
+    function constructorPredictionsOpen(seasonId) {
+      return exists(/databases/$(database)/documents/lfm_constructorPredictionSettings/$(seasonId))
+        && get(/databases/$(database)/documents/lfm_constructorPredictionSettings/$(seasonId)).data.status == "abierto";
+    }
+
+    function validConstructorPredictionVote(seasonId, voteUid) {
+      return request.resource.data.keys().hasOnly([
+          "uid",
+          "seasonId",
+          "participantName",
+          "linkedTeamId",
+          "picks",
+          "points",
+          "correctHits",
+          "notes",
+          "submittedByEmail",
+          "submittedAtLabel",
+          "updatedAt"
+        ])
+        && request.resource.data.uid == voteUid
+        && request.resource.data.seasonId == seasonId
+        && request.resource.data.participantName is string
+        && request.resource.data.linkedTeamId is string
+        && request.resource.data.picks is list
+        && request.resource.data.picks.size() == 10
+        && request.resource.data.points == 0
+        && request.resource.data.correctHits == 0
+        && request.resource.data.notes == "";
+    }
+
+    match /lfm_settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_seasons/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_costs/{seasonId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    match /lfm_awardSettings/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_raceAwards/{awardId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_regulations/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_motoristChampionships/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_constructorChampionships/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_constructorPointSystems/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_constructorPredictionSettings/{seasonId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_constructorPredictionVotes/{seasonId}/votes/{voteUid} {
+      allow read: if isAdmin()
+        || (signedIn() && request.auth.uid == voteUid)
+        || !constructorPredictionsOpen(seasonId);
+      allow create, update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == voteUid
+          && canVotePredictions()
+          && constructorPredictionsOpen(seasonId)
+          && validConstructorPredictionVote(seasonId, voteUid)
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /lfm_teamPersonnel/{teamId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_teams/{teamId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /lfm_teamFacilities/{teamId} {
+      allow read: if isAdmin() || isTeamUser(teamId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /lfm_teamCars/{teamId} {
+      allow read: if isAdmin() || isTeamUser(teamId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /lfm_teamEngines/{teamId} {
+      allow read: if isAdmin() || isTeamUser(teamId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /lfm_carSelections/{teamId} {
+      allow read: if isAdmin() || isTeamUser(teamId);
+      allow create, update: if isAdmin() || isTeamUser(teamId);
+      allow delete: if isAdmin();
+    }
+
+    match /lfm_users/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /lfm_teamEconomy/{teamId}/movements/{movementId} {
+      allow read: if isAdmin() || isTeamUser(teamId);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,357 @@
+{
+  "schema": "lfm_money_export",
+  "schemaVersion": 1,
+  "exportedAt": "2026-06-05T12:30:21.839Z",
+  "season": {
+    "id": "m1780661957503",
+    "name": "m1780661957503"
+  },
+  "money": {
+    "scale": 1000000,
+    "unit": "M"
+  },
+  "teams": [
+    {
+      "id": "mercedes",
+      "teamId": "mercedes",
+      "name": "MERCEDES",
+      "publicName": "MERCEDES",
+      "manager": "TOMIK",
+      "budget": 43375000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 43375000,
+      "budgetRemainingM": 43.375,
+      "lookupKeys": [
+        "mercedes",
+        "MERCEDES",
+        "TOMIK"
+      ]
+    },
+    {
+      "id": "aston",
+      "teamId": "aston",
+      "name": "ASTON",
+      "publicName": "ASTON",
+      "manager": "DIABLITO",
+      "budget": 117650000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 117650000,
+      "budgetRemainingM": 117.65,
+      "lookupKeys": [
+        "aston",
+        "ASTON",
+        "DIABLITO"
+      ]
+    },
+    {
+      "id": "ferrari",
+      "teamId": "ferrari",
+      "name": "FERRARI",
+      "publicName": "FERRARI",
+      "manager": "ASEGALINO",
+      "budget": 19575000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 19575000,
+      "budgetRemainingM": 19.575,
+      "lookupKeys": [
+        "ferrari",
+        "FERRARI",
+        "ASEGALINO"
+      ]
+    },
+    {
+      "id": "mclaren",
+      "teamId": "mclaren",
+      "name": "MCLAREN",
+      "publicName": "MCLAREN",
+      "manager": "JDAV",
+      "budget": 24600000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 24600000,
+      "budgetRemainingM": 24.6,
+      "lookupKeys": [
+        "mclaren",
+        "MCLAREN",
+        "JDAV"
+      ]
+    },
+    {
+      "id": "williams",
+      "teamId": "williams",
+      "name": "WILLIAMS",
+      "publicName": "WILLIAMS",
+      "manager": "PRICHID",
+      "budget": 22225000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 22225000,
+      "budgetRemainingM": 22.225,
+      "lookupKeys": [
+        "williams",
+        "WILLIAMS",
+        "PRICHID"
+      ]
+    },
+    {
+      "id": "haas",
+      "teamId": "haas",
+      "name": "HAAS",
+      "publicName": "HAAS",
+      "manager": "ALEXGAMER",
+      "budget": 45500000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 45500000,
+      "budgetRemainingM": 45.5,
+      "lookupKeys": [
+        "haas",
+        "HAAS",
+        "ALEXGAMER"
+      ]
+    },
+    {
+      "id": "redbull",
+      "teamId": "redbull",
+      "name": "RED BULL",
+      "publicName": "RED BULL",
+      "manager": "MARTINI",
+      "budget": 9150000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 9150000,
+      "budgetRemainingM": 9.15,
+      "lookupKeys": [
+        "redbull",
+        "RED BULL",
+        "MARTINI"
+      ]
+    },
+    {
+      "id": "porsche",
+      "teamId": "porsche",
+      "name": "PORSCHE",
+      "publicName": "PORSCHE",
+      "manager": "ANTONIO",
+      "budget": 80075000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 80075000,
+      "budgetRemainingM": 80.075,
+      "lookupKeys": [
+        "porsche",
+        "PORSCHE",
+        "ANTONIO"
+      ]
+    },
+    {
+      "id": "sauber",
+      "teamId": "sauber",
+      "name": "SAUBER",
+      "publicName": "SAUBER",
+      "manager": "MARIETE",
+      "budget": 70350000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 70350000,
+      "budgetRemainingM": 70.35,
+      "lookupKeys": [
+        "sauber",
+        "SAUBER",
+        "MARIETE"
+      ]
+    },
+    {
+      "id": "andretti",
+      "teamId": "andretti",
+      "name": "ANDRETTI",
+      "publicName": "ANDRETTI",
+      "manager": "ZAK",
+      "budget": 57950000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 57950000,
+      "budgetRemainingM": 57.95,
+      "lookupKeys": [
+        "andretti",
+        "ANDRETTI",
+        "ZAK"
+      ]
+    }
+  ],
+  "byTeam": {
+    "mercedes": {
+      "id": "mercedes",
+      "teamId": "mercedes",
+      "name": "MERCEDES",
+      "publicName": "MERCEDES",
+      "manager": "TOMIK",
+      "budget": 43375000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 43375000,
+      "budgetRemainingM": 43.375,
+      "lookupKeys": [
+        "mercedes",
+        "MERCEDES",
+        "TOMIK"
+      ]
+    },
+    "aston": {
+      "id": "aston",
+      "teamId": "aston",
+      "name": "ASTON",
+      "publicName": "ASTON",
+      "manager": "DIABLITO",
+      "budget": 117650000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 117650000,
+      "budgetRemainingM": 117.65,
+      "lookupKeys": [
+        "aston",
+        "ASTON",
+        "DIABLITO"
+      ]
+    },
+    "ferrari": {
+      "id": "ferrari",
+      "teamId": "ferrari",
+      "name": "FERRARI",
+      "publicName": "FERRARI",
+      "manager": "ASEGALINO",
+      "budget": 19575000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 19575000,
+      "budgetRemainingM": 19.575,
+      "lookupKeys": [
+        "ferrari",
+        "FERRARI",
+        "ASEGALINO"
+      ]
+    },
+    "mclaren": {
+      "id": "mclaren",
+      "teamId": "mclaren",
+      "name": "MCLAREN",
+      "publicName": "MCLAREN",
+      "manager": "JDAV",
+      "budget": 24600000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 24600000,
+      "budgetRemainingM": 24.6,
+      "lookupKeys": [
+        "mclaren",
+        "MCLAREN",
+        "JDAV"
+      ]
+    },
+    "williams": {
+      "id": "williams",
+      "teamId": "williams",
+      "name": "WILLIAMS",
+      "publicName": "WILLIAMS",
+      "manager": "PRICHID",
+      "budget": 22225000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 22225000,
+      "budgetRemainingM": 22.225,
+      "lookupKeys": [
+        "williams",
+        "WILLIAMS",
+        "PRICHID"
+      ]
+    },
+    "haas": {
+      "id": "haas",
+      "teamId": "haas",
+      "name": "HAAS",
+      "publicName": "HAAS",
+      "manager": "ALEXGAMER",
+      "budget": 45500000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 45500000,
+      "budgetRemainingM": 45.5,
+      "lookupKeys": [
+        "haas",
+        "HAAS",
+        "ALEXGAMER"
+      ]
+    },
+    "redbull": {
+      "id": "redbull",
+      "teamId": "redbull",
+      "name": "RED BULL",
+      "publicName": "RED BULL",
+      "manager": "MARTINI",
+      "budget": 9150000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 9150000,
+      "budgetRemainingM": 9.15,
+      "lookupKeys": [
+        "redbull",
+        "RED BULL",
+        "MARTINI"
+      ]
+    },
+    "porsche": {
+      "id": "porsche",
+      "teamId": "porsche",
+      "name": "PORSCHE",
+      "publicName": "PORSCHE",
+      "manager": "ANTONIO",
+      "budget": 80075000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 80075000,
+      "budgetRemainingM": 80.075,
+      "lookupKeys": [
+        "porsche",
+        "PORSCHE",
+        "ANTONIO"
+      ]
+    },
+    "sauber": {
+      "id": "sauber",
+      "teamId": "sauber",
+      "name": "SAUBER",
+      "publicName": "SAUBER",
+      "manager": "MARIETE",
+      "budget": 70350000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 70350000,
+      "budgetRemainingM": 70.35,
+      "lookupKeys": [
+        "sauber",
+        "SAUBER",
+        "MARIETE"
+      ]
+    },
+    "andretti": {
+      "id": "andretti",
+      "teamId": "andretti",
+      "name": "ANDRETTI",
+      "publicName": "ANDRETTI",
+      "manager": "ZAK",
+      "budget": 57950000,
+      "spent": 0,
+      "committed": 0,
+      "budgetRemaining": 57950000,
+      "budgetRemainingM": 57.95,
+      "lookupKeys": [
+        "andretti",
+        "ANDRETTI",
+        "ZAK"
+      ]
+    }
+  }
+}
