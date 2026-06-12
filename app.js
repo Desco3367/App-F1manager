@@ -22,6 +22,7 @@ let currentView = "public";
 let currentPublicTab = "inicio";
 let currentAdminTab = "base";
 let currentAdminCarTab = "resumen";
+let currentAdminCarRequestTeamFilter = "";
 let currentTeamTab = "resumen";
 const AUTO_REFRESH_MS = 10000;
 let autoRefreshTimer = null;
@@ -4245,6 +4246,10 @@ function renderAdmin() {
   });
   $("carResearchSteps")?.addEventListener("input", () => renderCarDesignStatFields("research"));
   $("carResearchForm")?.addEventListener("submit", saveCarDesign);
+  $("adminCarRequestTeamFilter")?.addEventListener("change", (event) => {
+    currentAdminCarRequestTeamFilter = event.target.value;
+    render();
+  });
   document.querySelectorAll("[data-load-car-request]").forEach((button) => {
     button.addEventListener("click", loadCarRequestIntoForm);
   });
@@ -7962,6 +7967,13 @@ function renderCarDesignForm(mode, teams) {
 
 function renderAdminCarRequestQueue(teams) {
   const pending = allPendingCarRequests(teams);
+  const selectedTeam = teams.some((team) => team.id === currentAdminCarRequestTeamFilter)
+    ? currentAdminCarRequestTeamFilter
+    : "";
+  currentAdminCarRequestTeamFilter = selectedTeam;
+  const visiblePending = selectedTeam
+    ? pending.filter(({ team }) => team.id === selectedTeam)
+    : pending;
   return `
     <article class="subcard car-request-admin-panel">
       <div class="card-header">
@@ -7969,12 +7981,22 @@ function renderAdminCarRequestQueue(teams) {
           <h4>Solicitudes de mejora</h4>
           <p class="muted">Carga el resultado real desde una solicitud pendiente o cancelala para liberar la pieza.</p>
         </div>
-        <span class="pill">${html(pending.length)} pendientes</span>
+        <span class="pill">${html(visiblePending.length)} de ${html(pending.length)} pendientes</span>
       </div>
       ${pending.length ? `<p class="warning-text">La seleccion no puede abrirse hasta resolver o cancelar estas solicitudes.</p>` : ""}
       ${pending.length ? `
+        <label>Filtrar por equipo
+          <select id="adminCarRequestTeamFilter">
+            <option value="">Todos los equipos</option>
+            ${teams.map((team) => `
+              <option value="${html(team.id)}" ${team.id === selectedTeam ? "selected" : ""}>${html(team.name)}</option>
+            `).join("")}
+          </select>
+        </label>
+      ` : ""}
+      ${visiblePending.length ? `
         <div class="car-request-admin-list">
-          ${pending.map(({ team, request }) => {
+          ${visiblePending.map(({ team, request }) => {
             const piece = pieceById(request.pieceId);
             return `
               <article class="car-request-card">
@@ -7994,7 +8016,7 @@ function renderAdminCarRequestQueue(teams) {
             `;
           }).join("")}
         </div>
-      ` : `<div class="empty">No hay solicitudes pendientes.</div>`}
+      ` : `<div class="empty">${pending.length ? "No hay solicitudes pendientes para este equipo." : "No hay solicitudes pendientes."}</div>`}
       <p id="adminCarRequestMessage" class="message"></p>
     </article>
   `;
