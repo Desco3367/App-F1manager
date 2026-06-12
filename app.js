@@ -23,6 +23,9 @@ let currentPublicTab = "inicio";
 let currentAdminTab = "base";
 let currentAdminCarTab = "resumen";
 let currentTeamTab = "resumen";
+const AUTO_REFRESH_MS = 10000;
+let autoRefreshTimer = null;
+let autoRefreshInFlight = false;
 let cache = {
   seasonId: "t7",
   seasons: [],
@@ -2804,10 +2807,53 @@ async function loadEngineData() {
   }
 }
 
+async function loadSessionData() {
+  await loadPublicData();
+
+  if (currentProfile?.teamId) {
+    cache.movements = await loadTeamMovements(currentProfile.teamId);
+    cache.teamMovements = new Map([[currentProfile.teamId, cache.movements]]);
+  } else {
+    cache.movements = [];
+    cache.teamMovements = new Map();
+  }
+
+  cache.profiles = isAdmin() ? await loadProfiles() : [];
+  await loadHeadquartersData();
+  if (isAdmin()) await loadAdminMovements();
+  await loadCarData();
+  await loadEngineData();
+  render();
+}
+
+function autoRefreshBlockedByEditing() {
+  const active = document.activeElement;
+  if (!active) return false;
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName);
+}
+
+async function autoRefreshData() {
+  if (autoRefreshInFlight || document.hidden || autoRefreshBlockedByEditing()) return;
+  autoRefreshInFlight = true;
+  try {
+    await loadSessionData();
+  } catch (error) {
+    console.warn("No se pudo refrescar la pagina automaticamente.", error);
+  } finally {
+    autoRefreshInFlight = false;
+  }
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(autoRefreshData, AUTO_REFRESH_MS);
+}
+
 async function bootAuth() {
   if (window.LFM_MISSING_CONFIG) {
     els.setupWarning.classList.remove("hidden");
     await loadPublicData();
+    startAutoRefresh();
     return;
   }
 
@@ -2820,21 +2866,8 @@ async function bootAuth() {
     els.adminNavBtn.classList.toggle("hidden", !isAdmin());
     els.authBadge.textContent = roleLabel(currentProfile);
 
-    await loadPublicData();
-
-    if (currentProfile?.teamId) {
-      cache.movements = await loadTeamMovements(currentProfile.teamId);
-      cache.teamMovements = new Map([[currentProfile.teamId, cache.movements]]);
-    } else {
-      cache.movements = [];
-      cache.teamMovements = new Map();
-    }
-
-    cache.profiles = isAdmin() ? await loadProfiles() : [];
-    await loadHeadquartersData();
-    if (isAdmin()) await loadAdminMovements();
-    await loadCarData();
-    await loadEngineData();
+    await loadSessionData();
+    startAutoRefresh();
 
     if (user && currentView === "login") {
       switchView(isAdmin() ? "admin" : currentProfile?.teamId ? "team" : "public");
@@ -10878,6 +10911,10 @@ els.loginForm.addEventListener("submit", async (event) => {
 els.logoutBtn.addEventListener("click", async () => {
   await auth.signOut();
   switchView("public");
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) autoRefreshData();
 });
 
 function statusText(status) {
