@@ -3385,59 +3385,14 @@ function wireTeamViewTabs() {
   document.querySelectorAll("[data-team-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       currentTeamTab = button.dataset.teamTab || "resumen";
-      document.querySelectorAll("[data-team-tab]").forEach((tabButton) => {
-        const active = tabButton.dataset.teamTab === currentTeamTab;
-        tabButton.classList.toggle("active", active);
-        tabButton.setAttribute("aria-selected", active ? "true" : "false");
-      });
-      document.querySelectorAll("[data-team-panel]").forEach((panel) => {
-        panel.classList.toggle("hidden", panel.dataset.teamPanel !== currentTeamTab);
-      });
+      renderTeam();
     });
-  });
-
-  document.querySelectorAll("[data-team-panel]").forEach((panel) => {
-    panel.classList.toggle("hidden", panel.dataset.teamPanel !== currentTeamTab);
   });
 }
 
-function renderTeam() {
-  if (!currentUser) {
-    els.teamView.innerHTML = `<div class="card narrow"><h2>Login requerido</h2><p class="muted">Entra con la cuenta del equipo.</p></div>`;
-    return;
-  }
-
-  if (!currentProfile?.teamId) {
-    els.teamView.innerHTML = `
-      <div class="card narrow">
-        <h2>Cuenta sin perfil</h2>
-        <p class="muted">Tu usuario existe en Firebase, pero el admin todavia no lo vinculo a un equipo.</p>
-        <p class="muted">UID: <code>${html(currentUser.uid)}</code></p>
-      </div>
-    `;
-    return;
-  }
-
-  const team = cache.teamMap.get(currentProfile.teamId);
-  const season = cache.season || window.LFM_SEED.season;
-  const movements = cache.movements;
-  const dev = developmentSummary(currentProfile.teamId);
-  const motorLimit = team?.isMotorist ? motorSummary(team.id) : null;
-
-  if (!team) {
-    els.teamView.innerHTML = `
-      <div class="card narrow">
-        <h2>Falta cargar el equipo</h2>
-        <p class="muted">Tu perfil esta vinculado a <code>${html(currentProfile.teamId)}</code>, pero no existe ese equipo en <code>lfm_teams</code>.</p>
-        <p class="muted">Entra como admin y toca <strong>Inicializar / actualizar T7</strong>. Si ya lo hiciste, revisa que el documento del equipo exista con ese mismo ID.</p>
-      </div>
-    `;
-    return;
-  }
-
-  els.teamView.innerHTML = `
-    ${renderTeamTabs(team)}
-
+function renderTeamSummaryPanel(team, season, dev, motorLimit) {
+  const motor = team.isMotorist ? motorLimit || motorSummary(team.id) : null;
+  return `
     <section class="grid two" data-team-panel="resumen">
       <article class="card">
         <div class="card-header">
@@ -3477,29 +3432,41 @@ function renderTeam() {
       <article class="card" data-team-panel="resumen">
         <div class="card-header">
           <h3>Limite motor</h3>
-          <span class="pill ${motorLimit.status === "over" ? "danger-pill" : motorLimit.status === "warn" ? "warn-pill" : ""}">${html(motorLimit.percent)}%</span>
+          <span class="pill ${motor.status === "over" ? "danger-pill" : motor.status === "warn" ? "warn-pill" : ""}">${html(motor.percent)}%</span>
         </div>
-        ${renderDevelopmentLimit(motorLimit)}
+        ${renderDevelopmentLimit(motor)}
       </article>
     ` : ""}
+  `;
+}
 
-    <article class="card" data-team-panel="coche">
-      <div class="card-header">
-        <h3>Mi coche</h3>
-        <span class="pill">Privado</span>
-      </div>
-      ${renderTeamCar(team.id)}
-    </article>
+function renderActiveTeamPanel(team, season, movements, dev, motorLimit) {
+  if (currentTeamTab === "coche") {
+    return `
+      <article class="card" data-team-panel="coche">
+        <div class="card-header">
+          <h3>Mi coche</h3>
+          <span class="pill">Privado</span>
+        </div>
+        ${renderTeamCar(team.id)}
+      </article>
+    `;
+  }
 
-    <article class="card" data-team-panel="pesos">
-      <div class="card-header">
-        <h3>Mis pesos</h3>
-        <span class="pill">Ultima version aplicada</span>
-      </div>
-      ${renderTeamWeights(team.id)}
-    </article>
+  if (currentTeamTab === "pesos") {
+    return `
+      <article class="card" data-team-panel="pesos">
+        <div class="card-header">
+          <h3>Mis pesos</h3>
+          <span class="pill">Ultima version aplicada</span>
+        </div>
+        ${renderTeamWeights(team.id)}
+      </article>
+    `;
+  }
 
-    ${team.isMotorist ? `
+  if (currentTeamTab === "motor" && team.isMotorist) {
+    return `
       <article class="card" data-team-panel="motor">
         <div class="card-header">
           <h3>Mi motor</h3>
@@ -3507,34 +3474,86 @@ function renderTeam() {
         </div>
         ${renderTeamEngine(team)}
       </article>
-    ` : ""}
+    `;
+  }
 
-    <article class="card" data-team-panel="snapshots">
-      <div class="card-header">
-        <h3>Snapshots de carrera</h3>
-        <span class="pill">Privado</span>
-      </div>
-      ${renderCarSnapshots(team.id)}
-    </article>
+  if (currentTeamTab === "snapshots") {
+    return `
+      <article class="card" data-team-panel="snapshots">
+        <div class="card-header">
+          <h3>Snapshots de carrera</h3>
+          <span class="pill">Privado</span>
+        </div>
+        ${renderCarSnapshots(team.id)}
+      </article>
+    `;
+  }
 
-    <article class="card" data-team-panel="sedes">
-      <div class="card-header">
-        <h3>Mis sedes</h3>
-        <span class="pill">${html(season.name || activeSeasonId().toUpperCase())}</span>
-      </div>
-      ${renderHeadquartersDetails(team.id)}
-    </article>
+  if (currentTeamTab === "sedes") {
+    return `
+      <article class="card" data-team-panel="sedes">
+        <div class="card-header">
+          <h3>Mis sedes</h3>
+          <span class="pill">${html(season.name || activeSeasonId().toUpperCase())}</span>
+        </div>
+        ${renderHeadquartersDetails(team.id)}
+      </article>
+    `;
+  }
 
-    <article class="card" data-team-panel="movimientos">
-      <div class="card-header">
-        <h3>Mis movimientos economicos</h3>
-        <span class="pill">Privado</span>
+  if (currentTeamTab === "movimientos") {
+    return `
+      <article class="card" data-team-panel="movimientos">
+        <div class="card-header">
+          <h3>Mis movimientos economicos</h3>
+          <span class="pill">Privado</span>
+        </div>
+        ${renderTeamTransferPanel(team)}
+        <div class="form-divider"></div>
+        ${renderMovementsTable(movements)}
+      </article>
+    `;
+  }
+
+  return renderTeamSummaryPanel(team, season, dev, motorLimit);
+}
+
+function renderTeam() {
+  if (!currentUser) {
+    els.teamView.innerHTML = `<div class="card narrow"><h2>Login requerido</h2><p class="muted">Entra con la cuenta del equipo.</p></div>`;
+    return;
+  }
+
+  if (!currentProfile?.teamId) {
+    els.teamView.innerHTML = `
+      <div class="card narrow">
+        <h2>Cuenta sin perfil</h2>
+        <p class="muted">Tu usuario existe en Firebase, pero el admin todavia no lo vinculo a un equipo.</p>
+        <p class="muted">UID: <code>${html(currentUser.uid)}</code></p>
       </div>
-      ${renderTeamTransferPanel(team)}
-      <div class="form-divider"></div>
-      ${renderMovementsTable(movements)}
-    </article>
-  `;
+    `;
+    return;
+  }
+
+  const team = cache.teamMap.get(currentProfile.teamId);
+  const season = cache.season || window.LFM_SEED.season;
+  const movements = cache.movements;
+  const dev = developmentSummary(currentProfile.teamId);
+  const motorLimit = team?.isMotorist ? motorSummary(team.id) : null;
+
+  if (!team) {
+    els.teamView.innerHTML = `
+      <div class="card narrow">
+        <h2>Falta cargar el equipo</h2>
+        <p class="muted">Tu perfil esta vinculado a <code>${html(currentProfile.teamId)}</code>, pero no existe ese equipo en <code>lfm_teams</code>.</p>
+        <p class="muted">Entra como admin y toca <strong>Inicializar / actualizar T7</strong>. Si ya lo hiciste, revisa que el documento del equipo exista con ese mismo ID.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const tabsHtml = renderTeamTabs(team);
+  els.teamView.innerHTML = `${tabsHtml}${renderActiveTeamPanel(team, season, movements, dev, motorLimit)}`;
 
   wireTeamViewTabs();
   $("teamCarRequestForm")?.addEventListener("submit", saveTeamCarRequest);
