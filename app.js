@@ -23,6 +23,7 @@ let currentPublicTab = "inicio";
 let currentAdminTab = "base";
 let currentAdminCarTab = "resumen";
 let currentAdminCarRequestTeamFilter = "";
+let currentAdminWeightRequestTeamFilter = "";
 let currentTeamTab = "resumen";
 const AUTO_REFRESH_MS = 10000;
 let autoRefreshTimer = null;
@@ -741,6 +742,58 @@ function carRequestPieceOptions(teamId, selectedPieceId = "") {
 
 function allPendingCarRequests(teams) {
   return teams.flatMap((team) => pendingCarRequests(team.id).map((request) => ({ team, request })));
+}
+
+function weightRequests(teamId) {
+  return (carSelection(teamId).weightRequests || [])
+    .filter((request) => request && request.seasonId === activeSeasonId())
+    .map((request) => {
+      const runs = Number(request.runs || 0);
+      return {
+        ...request,
+        runs,
+        costM: Number(request.costM ?? weightRunCostM(runs)),
+        status: request.status || "pending",
+        note: String(request.note || "")
+      };
+    });
+}
+
+function pendingWeightRequests(teamId) {
+  return weightRequests(teamId).filter((request) => request.status === "pending");
+}
+
+function weightRequestById(teamId, requestId) {
+  return weightRequests(teamId).find((request) => request.id === requestId) || null;
+}
+
+function allPendingWeightRequests(teams) {
+  return teams.flatMap((team) => pendingWeightRequests(team.id).map((request) => ({ team, request })));
+}
+
+function allWeightRequests(teams) {
+  return teams.flatMap((team) => weightRequests(team.id).map((request) => ({ team, request })));
+}
+
+function weightRequestPieceOptions(teamId, selectedPieceId = "") {
+  const pendingPieces = new Set(pendingWeightRequests(teamId).map((request) => request.pieceId));
+  const levels = weightLevels(teamId);
+  const firstAvailable = weightPieces().find((piece) => !pendingPieces.has(piece.id) && Number(levels[piece.id] || 0) < 10);
+  const selected = selectedPieceId || firstAvailable?.id || "";
+  return weightPieces().map((piece) => {
+    const level = Number(levels[piece.id] || 0);
+    const disabled = pendingPieces.has(piece.id) || level >= 10;
+    const reason = pendingPieces.has(piece.id)
+      ? " - pendiente"
+      : level >= 10
+        ? " - nivel 10"
+        : "";
+    return `
+      <option value="${html(piece.id)}" ${piece.id === selected ? "selected" : ""} ${disabled ? "disabled" : ""}>
+        ${html(piece.name)}${reason}
+      </option>
+    `;
+  }).join("");
 }
 
 function designsForPiece(teamId, pieceId) {
@@ -3331,6 +3384,10 @@ function renderTeam() {
   updateTeamCarRequestUpgradeOptions();
   $("teamCarForm")?.addEventListener("submit", saveTeamCarSelection);
   $("saveNextCarNameBtn")?.addEventListener("click", saveNextCarName);
+  $("teamWeightRequestForm")?.addEventListener("submit", saveTeamWeightRequest);
+  document.querySelectorAll("[data-cancel-team-weight-request]").forEach((button) => {
+    button.addEventListener("click", cancelTeamWeightRequest);
+  });
   wireTeamCarTabs();
   wireTeamCarPreviewControls();
 }
@@ -4014,6 +4071,14 @@ function renderAdmin() {
     <section class="grid two" data-admin-panel="pesos">
       <article class="card">
         <div class="card-header">
+          <h3>Solicitudes de peso</h3>
+          <span class="pill">Mejoras GP</span>
+        </div>
+        ${renderAdminWeightRequests(teams)}
+      </article>
+
+      <article class="card">
+        <div class="card-header">
           <h3>Registrar peso</h3>
           <span class="pill">Admin</span>
         </div>
@@ -4270,6 +4335,16 @@ function renderAdmin() {
   $("weightRunForm").addEventListener("submit", saveWeightRuns);
   $("weightManualForm").addEventListener("submit", saveWeightManualLevel);
   $("legacyWeightImportForm").addEventListener("submit", importLegacyWeights);
+  $("adminWeightRequestTeamFilter")?.addEventListener("change", (event) => {
+    currentAdminWeightRequestTeamFilter = event.target.value;
+    render();
+  });
+  document.querySelectorAll("[data-apply-weight-request]").forEach((button) => {
+    button.addEventListener("click", applyWeightRequest);
+  });
+  document.querySelectorAll("[data-cancel-weight-request]").forEach((button) => {
+    button.addEventListener("click", cancelWeightRequest);
+  });
   document.querySelectorAll("[data-apply-car-selection]").forEach((button) => {
     button.addEventListener("click", applyCarSelection);
   });
@@ -5111,6 +5186,8 @@ function renderTeamWeights(teamId) {
   const summary = weightSummaryFromLevels(teamId, levels);
 
   return `
+    ${renderTeamWeightRequestPanel(teamId)}
+
     <div class="weight-summary">
       <div><span>Peso extra total</span><strong>${formatKg(summary.totalWeightKg)}</strong></div>
       <div><span>Piezas en minimo</span><strong>${Object.values(summary.pieces).filter((piece) => piece.level >= 10).length}/${weightPieces().length}</strong></div>
@@ -5142,6 +5219,185 @@ function renderTeamWeights(teamId) {
 
     <h4 class="subsection-title">Historial de pesos</h4>
     ${renderWeightHistory(car.weightHistory || [], 8)}
+  `;
+}
+
+function renderTeamWeightRequestPanel(teamId) {
+  const developmentOpen = isDevelopmentWindowOpen();
+  const pending = pendingWeightRequests(teamId);
+  const pendingPieces = new Set(pending.map((request) => request.pieceId));
+  const levels = weightLevels(teamId);
+  const firstAvailablePiece = weightPieces().find((piece) => !pendingPieces.has(piece.id) && Number(levels[piece.id] || 0) < 10);
+  const blocked = !developmentOpen || pending.length >= 3 || !firstAvailablePiece;
+
+  return `
+    <section class="car-request-panel">
+      <div class="card-header">
+        <div>
+          <h4>Solicitar mejora de peso</h4>
+          <p class="muted">Pide tiradas de peso para el GP actual. Admin aplica el resultado y cobra el coste.</p>
+        </div>
+        <span class="pill ${pending.length >= 3 ? "warn-pill" : ""}">${html(pending.length)}/3 pendientes</span>
+      </div>
+      <form id="teamWeightRequestForm" class="form car-request-form">
+        <section class="grid two flat-grid">
+          <label>Pieza
+            <select id="teamWeightRequestPiece" ${blocked ? "disabled" : ""}>
+              ${weightRequestPieceOptions(teamId, firstAvailablePiece?.id || "")}
+            </select>
+          </label>
+          <label>Tiradas
+            <select id="teamWeightRequestRuns" ${blocked ? "disabled" : ""}>
+              <option value="1">1 tirada - ${moneyM(weightRunCostM(1))}</option>
+              <option value="2">2 tiradas - ${moneyM(weightRunCostM(2))}</option>
+              <option value="3">3 tiradas - ${moneyM(weightRunCostM(3))}</option>
+            </select>
+          </label>
+          <label>Nota
+            <input id="teamWeightRequestNote" maxlength="120" placeholder="Ej: priorizar esta pieza para el GP..." ${blocked ? "disabled" : ""} />
+          </label>
+        </section>
+        <button type="submit" ${blocked ? "disabled" : ""}>Enviar solicitud</button>
+        <p id="teamWeightRequestMessage" class="message"></p>
+      </form>
+      ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
+      ${pending.length >= 3 ? `<p class="warning-text">Ya tienes 3 solicitudes de peso pendientes.</p>` : ""}
+      ${developmentOpen && !firstAvailablePiece ? `<p class="warning-text">No quedan piezas disponibles para solicitar.</p>` : ""}
+      ${renderWeightRequestHistory(teamId)}
+    </section>
+  `;
+}
+
+function renderWeightAttemptSummary(attempts = []) {
+  if (!Array.isArray(attempts) || !attempts.length) return "";
+  return attempts
+    .map((attempt) => `${weightResultLabel(attempt.result)} ${html(attempt.levelBefore)}->${html(attempt.levelAfter)}`)
+    .join(", ");
+}
+
+function renderWeightRequestHistory(teamId) {
+  const requests = weightRequests(teamId);
+  const developmentOpen = isDevelopmentWindowOpen();
+  if (!requests.length) {
+    return `<div class="empty">Todavia no hay solicitudes de peso registradas.</div>`;
+  }
+
+  return `
+    <div class="car-request-list">
+      ${requests.slice().reverse().map((request) => {
+        const piece = weightPieceById(request.pieceId);
+        const resultText = renderWeightAttemptSummary(request.attempts);
+        return `
+          <article class="car-request-card">
+            <div class="car-piece-head">
+              <div>
+                <strong>${html(piece?.name || request.pieceId)}</strong>
+                <span>${html(request.runs)} tiradas - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+              </div>
+              <span class="pill ${carRequestStatusClass(request.status)}">${html(carRequestStatusLabel(request.status))}</span>
+            </div>
+            <p>${html(request.note || "Sin nota")}</p>
+            <small>
+              ${resultText ? `Resultado: ${resultText}` : ""}
+              ${request.cancelReason ? `Motivo: ${html(request.cancelReason)}` : ""}
+            </small>
+            ${request.status === "pending" ? `
+              <div class="request-actions">
+                <button
+                  type="button"
+                  class="ghost danger-action"
+                  data-cancel-team-weight-request="${html(request.id)}"
+                  ${developmentOpen ? "" : "disabled"}
+                >${developmentOpen ? "Arrepentirse" : "Mejoras cerradas"}</button>
+              </div>
+            ` : ""}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderAdminWeightRequests(teams) {
+  const pending = allPendingWeightRequests(teams);
+  const allRequests = allWeightRequests(teams)
+    .sort((a, b) => String(b.request.createdAtLabel || "").localeCompare(String(a.request.createdAtLabel || "")));
+  const selectedTeam = teams.some((team) => team.id === currentAdminWeightRequestTeamFilter)
+    ? currentAdminWeightRequestTeamFilter
+    : "";
+  currentAdminWeightRequestTeamFilter = selectedTeam;
+  const visiblePending = selectedTeam
+    ? pending.filter(({ team }) => team.id === selectedTeam)
+    : pending;
+  const visibleHistory = (selectedTeam
+    ? allRequests.filter(({ team }) => team.id === selectedTeam)
+    : allRequests).slice(0, 12);
+
+  return `
+    <div class="form">
+      <label>Filtrar por equipo
+        <select id="adminWeightRequestTeamFilter">
+          <option value="">Todos los equipos</option>
+          ${teams.map((team) => `
+            <option value="${html(team.id)}" ${team.id === selectedTeam ? "selected" : ""}>${html(team.name)}</option>
+          `).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="card-header compact-header">
+      <h4>Pendientes</h4>
+      <span class="pill">${html(visiblePending.length)} de ${html(pending.length)}</span>
+    </div>
+    ${pending.length ? `<p class="warning-text">La seleccion no puede abrirse hasta aplicar o cancelar estas solicitudes.</p>` : ""}
+    ${visiblePending.length ? `
+      <div class="car-request-admin-list">
+        ${visiblePending.map(({ team, request }) => {
+          const piece = weightPieceById(request.pieceId);
+          return `
+            <article class="car-request-card">
+              <div class="car-piece-head">
+                <div>
+                  <strong>${html(team.name)} - ${html(piece?.name || request.pieceId)}</strong>
+                  <span>${html(request.runs)} tiradas - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+                </div>
+                <span class="pill warn-pill">Pendiente</span>
+              </div>
+              <p>${html(request.note || "Sin nota")}</p>
+              <div class="request-actions">
+                <button type="button" class="ghost" data-apply-weight-request="${html(team.id)}:${html(request.id)}">Aplicar tiradas</button>
+                <button type="button" class="ghost danger-action" data-cancel-weight-request="${html(team.id)}:${html(request.id)}">Cancelar</button>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `<div class="empty">${pending.length ? "No hay solicitudes pendientes para este equipo." : "No hay solicitudes pendientes."}</div>`}
+    <div class="form-divider"></div>
+    <h4 class="subsection-title">Historial de solicitudes</h4>
+    ${visibleHistory.length ? `
+      <div class="car-request-list">
+        ${visibleHistory.map(({ team, request }) => {
+          const piece = weightPieceById(request.pieceId);
+          const resultText = renderWeightAttemptSummary(request.attempts);
+          return `
+            <article class="car-request-card">
+              <div class="car-piece-head">
+                <div>
+                  <strong>${html(team.name)} - ${html(piece?.name || request.pieceId)}</strong>
+                  <span>${html(request.runs)} tiradas - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+                </div>
+                <span class="pill ${carRequestStatusClass(request.status)}">${html(carRequestStatusLabel(request.status))}</span>
+              </div>
+              <small>
+                ${resultText ? `Resultado: ${resultText}` : html(request.note || "Sin nota")}
+                ${request.cancelReason ? ` - Motivo: ${html(request.cancelReason)}` : ""}
+              </small>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `<div class="empty">Todavia no hay solicitudes de peso registradas.</div>`}
+    <p id="adminWeightRequestMessage" class="message"></p>
   `;
 }
 
@@ -5955,8 +6211,10 @@ function renderRaceWindowAdmin() {
   const developmentOpen = isDevelopmentWindowOpen();
   const selectionOpen = isSelectionWindowOpen();
   const anyOpen = isAnyCarWindowOpen();
-  const pendingRequests = allPendingCarRequests(cache.teams.length ? cache.teams : window.LFM_SEED.teams || []);
-  const pendingCount = pendingRequests.length;
+  const requestTeams = cache.teams.length ? cache.teams : window.LFM_SEED.teams || [];
+  const pendingCarCount = allPendingCarRequests(requestTeams).length;
+  const pendingWeightCount = allPendingWeightRequests(requestTeams).length;
+  const pendingCount = pendingCarCount + pendingWeightCount;
 
   if (!races.length) {
     return `<div class="empty">Todavia no hay calendario cargado.</div>`;
@@ -5993,7 +6251,7 @@ function renderRaceWindowAdmin() {
         <button id="openSelectionWindowBtn" type="button" ${anyOpen || pendingCount ? "disabled" : ""}>Abrir seleccion</button>
         <button id="closeRaceWindowBtn" class="ghost" type="button" ${selectionOpen ? "" : "disabled"}>Cerrar seleccion y aplicar</button>
       </div>
-      ${pendingCount ? `<p class="warning-text">No puedes abrir seleccion: quedan ${html(pendingCount)} solicitudes pendientes.</p>` : ""}
+      ${pendingCount ? `<p class="warning-text">No puedes abrir seleccion: quedan ${html(pendingCarCount)} solicitudes de coche y ${html(pendingWeightCount)} solicitudes de peso pendientes.</p>` : ""}
       <p id="raceWindowMessage" class="message"></p>
     </section>
   `;
@@ -9010,9 +9268,11 @@ async function openSelectionWindow(event) {
       throw new Error("Ya hay un plazo de coche abierto.");
     }
 
-    const pendingCount = allPendingCarRequests(cache.teams).length;
+    const pendingCarCount = allPendingCarRequests(cache.teams).length;
+    const pendingWeightCount = allPendingWeightRequests(cache.teams).length;
+    const pendingCount = pendingCarCount + pendingWeightCount;
     if (pendingCount) {
-      throw new Error(`No puedes abrir seleccion: quedan ${pendingCount} solicitudes pendientes.`);
+      throw new Error(`No puedes abrir seleccion: quedan ${pendingCarCount} solicitudes de coche y ${pendingWeightCount} solicitudes de peso pendientes.`);
     }
 
     const race = selectedRaceWindowRace();
@@ -9937,6 +10197,88 @@ async function cancelCarRequest(event) {
   }
 }
 
+async function applyWeightRequest(event) {
+  const { teamId, requestId } = parseCarRequestToken(event.currentTarget.dataset.applyWeightRequest);
+  const request = weightRequestById(teamId, requestId);
+  const stop = setLoading(event.currentTarget, "Aplicando...");
+  showMessage($("adminWeightRequestMessage"), "");
+  try {
+    if (!request || request.status !== "pending") {
+      throw new Error("Solicitud de peso no encontrada o ya resuelta.");
+    }
+
+    const savedEntry = await applyWeightRuns({
+      teamId,
+      pieceId: request.pieceId,
+      runs: Number(request.runs),
+      shouldCharge: true,
+      requestId
+    });
+
+    await loadPublicData();
+    if (isAdmin()) await loadAdminMovements();
+    await loadCarData();
+    render();
+
+    showMessage(
+      $("adminWeightRequestMessage"),
+      `${teamName(teamId)} ${savedEntry.pieceName}: ${renderWeightAttemptSummary(savedEntry.attempts)}. Coste ${moneyM(savedEntry.costM)}.`,
+      "success"
+    );
+  } catch (error) {
+    showMessage($("adminWeightRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelWeightRequest(event) {
+  const { teamId, requestId } = parseCarRequestToken(event.currentTarget.dataset.cancelWeightRequest);
+  const ok = window.confirm(`Cancelar solicitud de peso de ${teamName(teamId)}?`);
+  if (!ok) return;
+
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("adminWeightRequestMessage"), "");
+  try {
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.weightRequests) ? data.weightRequests : [];
+      const index = requests.findIndex((request) => request.id === requestId && request.status === "pending");
+      if (index < 0) throw new Error("Solicitud de peso no encontrada o ya resuelta.");
+
+      const nextRequests = requests.map((request, requestIndex) => (
+        requestIndex === index
+          ? {
+              ...request,
+              status: "cancelled",
+              cancelReason: "Cancelada por admin",
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        weightRequests: nextRequests,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    await loadCarData();
+    render();
+    showMessage($("adminWeightRequestMessage"), "Solicitud de peso cancelada.", "success");
+  } catch (error) {
+    showMessage($("adminWeightRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
 async function saveCarDesign(event) {
   event.preventDefault();
   const stop = setLoading(event.submitter, "Guardando...");
@@ -10213,6 +10555,165 @@ async function importLegacyCars(event) {
   }
 }
 
+async function applyWeightRuns({
+  teamId,
+  pieceId,
+  runs,
+  shouldCharge = true,
+  requestId = ""
+}) {
+  const piece = weightPieceById(pieceId);
+  if (!piece) throw new Error("Pieza de peso no encontrada.");
+  if (![1, 2, 3].includes(runs)) throw new Error("Las tiradas deben ser 1, 2 o 3.");
+
+  const costM = shouldCharge ? weightRunCostM(runs) : 0;
+  if (shouldCharge && costM <= 0) throw new Error("Coste de tiradas no configurado.");
+
+  const createdAtLabel = new Date().toISOString();
+  const eventId = `weight-${pieceId}-${Date.now().toString(36)}`;
+  let savedEntry = null;
+
+  await db.runTransaction(async (tx) => {
+    const carRef = db.collection("lfm_teamCars").doc(teamId);
+    const teamRef = db.collection("lfm_teams").doc(teamId);
+    const selectionRef = requestId ? db.collection("lfm_carSelections").doc(teamId) : null;
+    const carSnap = await tx.get(carRef);
+    const teamSnap = shouldCharge && costM > 0 ? await tx.get(teamRef) : null;
+    const selectionSnap = selectionRef ? await tx.get(selectionRef) : null;
+
+    if (shouldCharge && costM > 0 && !teamSnap.exists) {
+      throw new Error("Equipo no encontrado.");
+    }
+
+    const selectionData = selectionSnap?.exists ? selectionSnap.data() : {};
+    const requestList = Array.isArray(selectionData.weightRequests) ? selectionData.weightRequests : [];
+    const requestIndex = requestId
+      ? requestList.findIndex((request) => request.id === requestId && request.status === "pending")
+      : -1;
+
+    if (requestId) {
+      if (requestIndex < 0) throw new Error("Solicitud de peso no encontrada o ya resuelta.");
+      const request = requestList[requestIndex];
+      if (request.pieceId !== pieceId || Number(request.runs || 0) !== runs) {
+        throw new Error("La solicitud de peso no coincide con las tiradas a aplicar.");
+      }
+    }
+
+    const data = carSnap.exists ? carSnap.data() : {};
+    const levels = normalizeWeightLevels(teamId, data.weightLevels || {});
+    const levelBefore = levels[pieceId] || 0;
+    if (levelBefore >= 10) {
+      throw new Error(`${piece.name} ya esta en nivel 10.`);
+    }
+
+    let currentLevel = levelBefore;
+    const attempts = [];
+    for (let index = 0; index < runs; index += 1) {
+      if (currentLevel >= 10) break;
+      const attempt = runWeightAttempt(pieceId, currentLevel);
+      attempts.push({
+        ...attempt,
+        run: index + 1
+      });
+      currentLevel = attempt.levelAfter;
+    }
+
+    if (!attempts.length) throw new Error("No se pudo registrar ninguna tirada.");
+
+    const history = Array.isArray(data.weightHistory) ? data.weightHistory : [];
+    const entry = {
+      id: eventId,
+      type: "runs",
+      seasonId: activeSeasonId(),
+      teamId,
+      pieceId,
+      pieceName: piece.name,
+      runs,
+      costM,
+      levelBefore,
+      levelAfter: currentLevel,
+      attempts,
+      requestId: requestId || "",
+      createdAtLabel,
+      createdByUid: currentUser.uid,
+      createdByEmail: currentUser.email
+    };
+    savedEntry = entry;
+
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    tx.set(carRef, {
+      teamId,
+      seasonId: activeSeasonId(),
+      weightLevels: {
+        [pieceId]: currentLevel
+      },
+      weightHistory: [...history, entry].slice(-120),
+      lastWeightUpdateAt: now,
+      updatedAt: now
+    }, { merge: true });
+
+    if (shouldCharge && costM > 0) {
+      const current = Number(teamSnap.data().budgetRemainingM || 0);
+      const amountM = -costM;
+      tx.update(teamRef, {
+        budgetRemainingM: Math.round((current + amountM) * 1000) / 1000,
+        updatedAt: now
+      });
+
+      const movementRef = db.collection("lfm_teamEconomy")
+        .doc(teamId)
+        .collection("movements")
+        .doc();
+
+      tx.set(movementRef, {
+        seasonId: activeSeasonId(),
+        teamId,
+        amountM,
+        category: "peso",
+        limitScope: "development",
+        pieceId,
+        weightAction: "runs",
+        weightRequestId: requestId || "",
+        runs,
+        levelBefore,
+        levelAfter: currentLevel,
+        attempts,
+        concept: `Peso ${piece.name}: ${runs} tiradas${requestId ? " (solicitud equipo)" : ""}`,
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAt: now
+      });
+    }
+
+    if (requestId && selectionRef) {
+      const nextRequests = requestList.map((request, index) => (
+        index === requestIndex
+          ? {
+              ...request,
+              status: "completed",
+              resolvedWeightEntryId: entry.id,
+              resolvedCostM: costM,
+              levelBefore,
+              levelAfter: currentLevel,
+              attempts,
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        weightRequests: nextRequests,
+        updatedAt: now
+      }, { merge: true });
+    }
+  });
+
+  return savedEntry;
+}
+
 async function saveWeightRuns(event) {
   event.preventDefault();
   const stop = setLoading(event.submitter, "Registrando...");
@@ -10220,114 +10721,9 @@ async function saveWeightRuns(event) {
   try {
     const teamId = $("weightRunTeam").value;
     const pieceId = $("weightRunPiece").value;
-    const piece = weightPieceById(pieceId);
     const runs = Number($("weightRunCount").value);
     const shouldCharge = $("weightRunCharge").checked;
-
-    if (!piece) throw new Error("Pieza de peso no encontrada.");
-    if (![1, 2, 3].includes(runs)) throw new Error("Las tiradas deben ser 1, 2 o 3.");
-
-    const costM = shouldCharge ? weightRunCostM(runs) : 0;
-    if (shouldCharge && costM <= 0) throw new Error("Coste de tiradas no configurado.");
-
-    const createdAtLabel = new Date().toISOString();
-    const eventId = `weight-${pieceId}-${Date.now().toString(36)}`;
-    let savedEntry = null;
-
-    await db.runTransaction(async (tx) => {
-      const carRef = db.collection("lfm_teamCars").doc(teamId);
-      const teamRef = db.collection("lfm_teams").doc(teamId);
-      const carSnap = await tx.get(carRef);
-      const teamSnap = shouldCharge && costM > 0 ? await tx.get(teamRef) : null;
-
-      if (shouldCharge && costM > 0 && !teamSnap.exists) {
-        throw new Error("Equipo no encontrado.");
-      }
-
-      const data = carSnap.exists ? carSnap.data() : {};
-      const levels = normalizeWeightLevels(teamId, data.weightLevels || {});
-      const levelBefore = levels[pieceId] || 0;
-      if (levelBefore >= 10) {
-        throw new Error(`${piece.name} ya esta en nivel 10.`);
-      }
-
-      let currentLevel = levelBefore;
-      const attempts = [];
-      for (let index = 0; index < runs; index += 1) {
-        if (currentLevel >= 10) break;
-        const attempt = runWeightAttempt(pieceId, currentLevel);
-        attempts.push({
-          ...attempt,
-          run: index + 1
-        });
-        currentLevel = attempt.levelAfter;
-      }
-
-      if (!attempts.length) throw new Error("No se pudo registrar ninguna tirada.");
-
-      const history = Array.isArray(data.weightHistory) ? data.weightHistory : [];
-      const entry = {
-        id: eventId,
-        type: "runs",
-        seasonId: activeSeasonId(),
-        teamId,
-        pieceId,
-        pieceName: piece.name,
-        runs,
-        costM,
-        levelBefore,
-        levelAfter: currentLevel,
-        attempts,
-        createdAtLabel,
-        createdByUid: currentUser.uid,
-        createdByEmail: currentUser.email
-      };
-      savedEntry = entry;
-
-      const now = firebase.firestore.FieldValue.serverTimestamp();
-      tx.set(carRef, {
-        teamId,
-        seasonId: activeSeasonId(),
-        weightLevels: {
-          [pieceId]: currentLevel
-        },
-        weightHistory: [...history, entry].slice(-120),
-        lastWeightUpdateAt: now,
-        updatedAt: now
-      }, { merge: true });
-
-      if (shouldCharge && costM > 0) {
-        const current = Number(teamSnap.data().budgetRemainingM || 0);
-        const amountM = -costM;
-        tx.update(teamRef, {
-          budgetRemainingM: Math.round((current + amountM) * 1000) / 1000,
-          updatedAt: now
-        });
-
-        const movementRef = db.collection("lfm_teamEconomy")
-          .doc(teamId)
-          .collection("movements")
-          .doc();
-
-        tx.set(movementRef, {
-          seasonId: activeSeasonId(),
-          teamId,
-          amountM,
-          category: "peso",
-          limitScope: "development",
-          pieceId,
-          weightAction: "runs",
-          runs,
-          levelBefore,
-          levelAfter: currentLevel,
-          attempts,
-          concept: `Peso ${piece.name}: ${runs} tiradas`,
-          createdByUid: currentUser.uid,
-          createdByEmail: currentUser.email,
-          createdAt: now
-        });
-      }
-    });
+    const savedEntry = await applyWeightRuns({ teamId, pieceId, runs, shouldCharge });
 
     event.target.reset();
     await loadPublicData();
@@ -10335,12 +10731,10 @@ async function saveWeightRuns(event) {
     await loadCarData();
     render();
 
-    const resultText = savedEntry.attempts
-      .map((attempt) => `${weightResultLabel(attempt.result)} ${attempt.levelBefore}->${attempt.levelAfter}`)
-      .join(", ");
+    const resultText = renderWeightAttemptSummary(savedEntry.attempts);
     showMessage(
       $("weightMessage"),
-      `${teamName(teamId)} ${piece.name}: ${resultText}. Coste ${moneyM(savedEntry.costM)}.`,
+      `${teamName(teamId)} ${savedEntry.pieceName}: ${resultText}. Coste ${moneyM(savedEntry.costM)}.`,
       "success"
     );
   } catch (error) {
@@ -10483,6 +10877,138 @@ async function importLegacyWeights(event) {
     showMessage($("legacyWeightImportMessage"), `Importados pesos de ${docs.length} equipos.${skippedText}`, "success");
   } catch (error) {
     showMessage($("legacyWeightImportMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function saveTeamWeightRequest(event) {
+  event.preventDefault();
+  const stop = setLoading(event.submitter, "Enviando...");
+  showMessage($("teamWeightRequestMessage"), "");
+  try {
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
+    }
+
+    const teamId = currentProfile?.teamId;
+    if (!teamId) throw new Error("Perfil sin equipo.");
+
+    const pieceId = $("teamWeightRequestPiece").value;
+    const piece = weightPieceById(pieceId);
+    const runs = Number($("teamWeightRequestRuns").value);
+    const note = $("teamWeightRequestNote").value.trim();
+    const costM = weightRunCostM(runs);
+    const raceWindow = currentRaceWindow();
+
+    if (!piece) throw new Error("Pieza de peso no encontrada.");
+    if (![1, 2, 3].includes(runs)) throw new Error("Las tiradas deben ser 1, 2 o 3.");
+    if (costM <= 0) throw new Error("Coste de tiradas no configurado.");
+
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const carRef = db.collection("lfm_teamCars").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const carSnap = await tx.get(carRef);
+      const selectionData = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(selectionData.weightRequests) ? selectionData.weightRequests : [];
+      const pending = requests.filter((request) => request.seasonId === activeSeasonId() && request.status === "pending");
+      const carData = carSnap.exists ? carSnap.data() : {};
+      const levels = normalizeWeightLevels(teamId, carData.weightLevels || {});
+
+      if (pending.length >= 3) throw new Error("Ya tienes 3 solicitudes de peso pendientes.");
+      if (pending.some((request) => request.pieceId === pieceId)) {
+        throw new Error("Ya tienes una solicitud de peso pendiente para esa pieza.");
+      }
+      if (Number(levels[pieceId] || 0) >= 10) {
+        throw new Error(`${piece.name} ya esta en nivel 10.`);
+      }
+
+      const request = {
+        id: `wreq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        seasonId: activeSeasonId(),
+        raceId: raceWindow.raceId || "",
+        raceLabel: currentRaceWindowLabel(),
+        pieceId,
+        runs,
+        costM,
+        note,
+        status: "pending",
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAtLabel: new Date().toISOString()
+      };
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        weightRequests: [...requests, request],
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    showMessage($("teamWeightRequestMessage"), "Solicitud de peso enviada. Admin aplicara las tiradas.", "success");
+    await loadCarData();
+    render();
+  } catch (error) {
+    showMessage($("teamWeightRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelTeamWeightRequest(event) {
+  const requestId = event.currentTarget.dataset.cancelTeamWeightRequest || "";
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("teamWeightRequestMessage"), "");
+  try {
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
+    }
+
+    const teamId = currentProfile?.teamId;
+    if (!teamId) throw new Error("Perfil sin equipo.");
+    if (!requestId) throw new Error("Solicitud no encontrada.");
+
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.weightRequests) ? data.weightRequests : [];
+      const index = requests.findIndex((request) => (
+        request.id === requestId
+        && request.seasonId === activeSeasonId()
+        && request.status === "pending"
+      ));
+
+      if (index < 0) throw new Error("Solicitud no encontrada o ya resuelta.");
+
+      const nextRequests = requests.map((request, requestIndex) => (
+        requestIndex === index
+          ? {
+              ...request,
+              status: "cancelled",
+              cancelReason: "Cancelada por el equipo",
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        weightRequests: nextRequests,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    showMessage($("teamWeightRequestMessage"), "Solicitud de peso cancelada.", "success");
+    await loadCarData();
+    render();
+  } catch (error) {
+    showMessage($("teamWeightRequestMessage"), translateError(error), "error");
   } finally {
     stop();
   }
