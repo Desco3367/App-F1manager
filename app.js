@@ -63,6 +63,8 @@ let cache = {
   personnelLoadError: "",
   movements: [],
   teamMovements: new Map(),
+  transferRequests: [],
+  transferRequestsLoadError: "",
   profiles: []
 };
 
@@ -2884,6 +2886,52 @@ async function loadAdminMovements() {
   cache.teamMovements = new Map(entries);
 }
 
+function normalizeTransferRequest(doc) {
+  const data = doc.data ? doc.data() : doc;
+  return {
+    id: doc.id || data.id || "",
+    ...data,
+    amountM: moneyValue(data.amountM || 0),
+    status: data.status || "pending",
+    concept: String(data.concept || "")
+  };
+}
+
+function sortTransferRequests(requests) {
+  return requests
+    .slice()
+    .sort((a, b) => {
+      if (a.status === "pending" && b.status !== "pending") return -1;
+      if (a.status !== "pending" && b.status === "pending") return 1;
+      return String(b.createdAtLabel || "").localeCompare(String(a.createdAtLabel || ""));
+    });
+}
+
+async function loadTransferRequests() {
+  cache.transferRequests = [];
+  cache.transferRequestsLoadError = "";
+  if (window.LFM_MISSING_CONFIG || !currentUser) return;
+
+  try {
+    let snap = null;
+    if (isAdmin()) {
+      snap = await db.collection("lfm_transferRequests").get();
+    } else if (currentProfile?.teamId) {
+      snap = await db.collection("lfm_transferRequests")
+        .where("fromTeamId", "==", currentProfile.teamId)
+        .get();
+    }
+
+    cache.transferRequests = sortTransferRequests(
+      (snap?.docs || [])
+        .map(normalizeTransferRequest)
+        .filter((request) => (request.seasonId || activeSeasonId()) === activeSeasonId())
+    );
+  } catch (error) {
+    cache.transferRequestsLoadError = translateError(error);
+  }
+}
+
 async function loadProfiles() {
   if (window.LFM_MISSING_CONFIG || !isAdmin()) return [];
   const snap = await db.collection("lfm_users").get();
@@ -2984,6 +3032,7 @@ async function loadSessionData() {
   }
 
   cache.profiles = isAdmin() ? await loadProfiles() : [];
+  await loadTransferRequests();
   await loadHeadquartersData();
   if (isAdmin()) await loadAdminMovements();
   await loadCarData();
@@ -3481,6 +3530,8 @@ function renderTeam() {
         <h3>Mis movimientos economicos</h3>
         <span class="pill">Privado</span>
       </div>
+      ${renderTeamTransferPanel(team)}
+      <div class="form-divider"></div>
       ${renderMovementsTable(movements)}
     </article>
   `;
@@ -3502,6 +3553,10 @@ function renderTeam() {
   $("teamEngineRequestForm")?.addEventListener("submit", saveTeamEngineRequest);
   document.querySelectorAll("[data-cancel-team-engine-request]").forEach((button) => {
     button.addEventListener("click", cancelTeamEngineRequest);
+  });
+  $("teamTransferForm")?.addEventListener("submit", saveTeamTransferRequest);
+  document.querySelectorAll("[data-cancel-transfer]").forEach((button) => {
+    button.addEventListener("click", cancelTeamTransferRequest);
   });
   wireTeamCarTabs();
   wireTeamCarPreviewControls();
@@ -4281,6 +4336,14 @@ function renderAdmin() {
     <section class="grid two" data-admin-panel="economia">
       <article class="card">
         <div class="card-header">
+          <h3>Solicitudes de transferencia</h3>
+          <span class="pill">Aprobacion admin</span>
+        </div>
+        ${renderAdminTransferRequests()}
+      </article>
+
+      <article class="card">
+        <div class="card-header">
           <h3>Registrar movimiento economico</h3>
         </div>
         <form id="movementForm" class="form">
@@ -4391,6 +4454,12 @@ function renderAdmin() {
   $("seasonCalendarForm")?.addEventListener("submit", saveSeasonCalendar);
   $("profileForm").addEventListener("submit", saveProfile);
   $("movementForm").addEventListener("submit", saveMovement);
+  document.querySelectorAll("[data-approve-transfer]").forEach((button) => {
+    button.addEventListener("click", approveTransferRequest);
+  });
+  document.querySelectorAll("[data-reject-transfer]").forEach((button) => {
+    button.addEventListener("click", rejectTransferRequest);
+  });
   $("moneyExportBtn")?.addEventListener("click", exportMoneyForBids);
   $("moneyImportForm")?.addEventListener("submit", importMoneyFromBids);
   $("moneyImportApplyBtn")?.addEventListener("click", applyMoneyImport);
@@ -8999,6 +9068,121 @@ function renderMovementsTable(movements) {
   `;
 }
 
+function transferStatusLabel(status) {
+  const labels = {
+    pending: "Pendiente",
+    approved: "Aprobada",
+    rejected: "Rechazada",
+    cancelled: "Cancelada"
+  };
+  return labels[status] || status || "-";
+}
+
+function transferStatusClass(status) {
+  if (status === "approved") return "done-pill";
+  if (status === "rejected" || status === "cancelled") return "danger-pill";
+  return "warn-pill";
+}
+
+function transferRequestsForTeam(teamId) {
+  return sortTransferRequests(cache.transferRequests.filter((request) => request.fromTeamId === teamId));
+}
+
+function transferRequestById(requestId) {
+  return cache.transferRequests.find((request) => request.id === requestId) || null;
+}
+
+function renderTransferRequestRows(requests, { admin = false } = {}) {
+  if (!requests.length) {
+    return `<div class="empty">Todavia no hay solicitudes de transferencia.</div>`;
+  }
+
+  return `
+    <div class="car-request-list">
+      ${requests.map((request) => `
+        <article class="car-request-card">
+          <div class="car-piece-head">
+            <div>
+              <strong>${admin ? `${html(teamName(request.fromTeamId))} -> ${html(teamName(request.toTeamId))}` : `A ${html(teamName(request.toTeamId))}`}</strong>
+              <span>${moneyM(request.amountM)} - ${html(formatDate(request.createdAtLabel))}</span>
+            </div>
+            <span class="pill ${transferStatusClass(request.status)}">${html(transferStatusLabel(request.status))}</span>
+          </div>
+          <p>${html(request.concept || "Sin concepto")}</p>
+          ${request.status !== "pending" ? `<small>${html(request.decidedAtLabel || request.cancelledAtLabel ? formatDate(request.decidedAtLabel || request.cancelledAtLabel) : "")}</small>` : ""}
+          ${admin && request.status === "pending" ? `
+            <div class="request-actions">
+              <button type="button" class="ghost" data-approve-transfer="${html(request.id)}">Aprobar</button>
+              <button type="button" class="ghost danger-action" data-reject-transfer="${html(request.id)}">Rechazar</button>
+            </div>
+          ` : ""}
+          ${!admin && request.status === "pending" ? `
+            <div class="request-actions">
+              <button type="button" class="ghost danger-action" data-cancel-transfer="${html(request.id)}">Cancelar solicitud</button>
+            </div>
+          ` : ""}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderTeamTransferPanel(team) {
+  const otherTeams = cache.teams.filter((item) => item.id !== team.id);
+  const requests = transferRequestsForTeam(team.id);
+
+  return `
+    <section class="transfer-request-panel">
+      <div class="card-header flat-header">
+        <div>
+          <h4>Solicitar transferencia</h4>
+          <p class="muted">La solicitud queda pendiente hasta que admin la apruebe. No mueve presupuesto al enviarse.</p>
+        </div>
+        <span class="pill">Saldo ${moneyM(team.budgetRemainingM)}</span>
+      </div>
+      <form id="teamTransferForm" class="form">
+        <section class="grid two flat-grid">
+          <label>Equipo destino
+            <select id="teamTransferTo" ${otherTeams.length ? "" : "disabled"}>
+              ${otherTeams.map((item) => `<option value="${html(item.id)}">${html(item.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Monto en M
+            <input id="teamTransferAmount" type="number" min="0.001" max="${html(team.budgetRemainingM || 0)}" step="0.001" required />
+          </label>
+          <label>Concepto
+            <input id="teamTransferConcept" maxlength="140" placeholder="Acuerdo, pago interno, compensacion..." required />
+          </label>
+        </section>
+        <button type="submit" ${otherTeams.length ? "" : "disabled"}>Enviar solicitud</button>
+        <p id="teamTransferMessage" class="message"></p>
+      </form>
+      ${cache.transferRequestsLoadError ? `<p class="warning-text">No pude cargar solicitudes: ${html(cache.transferRequestsLoadError)}</p>` : ""}
+      <div class="form-divider"></div>
+      <h4 class="subsection-title">Mis solicitudes de transferencia</h4>
+      ${renderTransferRequestRows(requests)}
+    </section>
+  `;
+}
+
+function renderAdminTransferRequests() {
+  const pending = cache.transferRequests.filter((request) => request.status === "pending");
+  const history = cache.transferRequests.filter((request) => request.status !== "pending").slice(0, 12);
+
+  return `
+    ${cache.transferRequestsLoadError ? `<p class="warning-text">No pude cargar solicitudes: ${html(cache.transferRequestsLoadError)}</p>` : ""}
+    <div class="card-header compact-header">
+      <h4>Pendientes</h4>
+      <span class="pill">${html(pending.length)}</span>
+    </div>
+    ${renderTransferRequestRows(pending, { admin: true })}
+    <div class="form-divider"></div>
+    <h4 class="subsection-title">Historial reciente</h4>
+    ${history.length ? renderTransferRequestRows(history, { admin: true }) : `<div class="empty">Todavia no hay transferencias resueltas.</div>`}
+    <p id="adminTransferMessage" class="message"></p>
+  `;
+}
+
 function readTransitionValuesFromForm() {
   const values = {};
   document.querySelectorAll("[data-transition-piece][data-transition-stat]").forEach((input) => {
@@ -10085,6 +10269,210 @@ async function applyMoneyImport(event) {
     showMessage($("moneyImportMessage"), `Dinero importado: ${appliedSummary.changedCount} movimientos privados, diferencia total ${signedMoneyM(appliedSummary.totalDeltaM)}.`, "success");
   } catch (error) {
     showMessage($("moneyImportMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function saveTeamTransferRequest(event) {
+  event.preventDefault();
+  const stop = setLoading(event.submitter, "Enviando...");
+  showMessage($("teamTransferMessage"), "");
+  try {
+    const fromTeamId = currentProfile?.teamId || "";
+    const team = cache.teamMap.get(fromTeamId);
+    const toTeamId = $("teamTransferTo").value;
+    const amountM = moneyValue($("teamTransferAmount").value);
+    const concept = $("teamTransferConcept").value.trim();
+
+    if (!team) throw new Error("Equipo no encontrado.");
+    if (!cache.teamMap.has(toTeamId)) throw new Error("Equipo destino no valido.");
+    if (fromTeamId === toTeamId) throw new Error("No puedes transferirte dinero a tu propio equipo.");
+    if (!Number.isFinite(amountM) || amountM <= 0) throw new Error("El monto debe ser mayor a cero.");
+    if (amountM > moneyValue(team.budgetRemainingM)) throw new Error("No tienes presupuesto suficiente para solicitar esa transferencia.");
+    if (!concept) throw new Error("Completa el concepto de la transferencia.");
+
+    await db.collection("lfm_transferRequests").add({
+      seasonId: activeSeasonId(),
+      fromTeamId,
+      toTeamId,
+      amountM,
+      concept,
+      status: "pending",
+      createdByUid: currentUser.uid,
+      createdByEmail: currentUser.email,
+      createdAtLabel: new Date().toISOString()
+    });
+
+    event.target.reset();
+    await loadTransferRequests();
+    render();
+    showMessage($("teamTransferMessage"), "Solicitud enviada. Queda pendiente de aprobacion admin.", "success");
+  } catch (error) {
+    showMessage($("teamTransferMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelTeamTransferRequest(event) {
+  const requestId = event.currentTarget.dataset.cancelTransfer || "";
+  const request = transferRequestById(requestId);
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("teamTransferMessage"), "");
+  try {
+    if (!request || request.status !== "pending") throw new Error("Solicitud no encontrada o ya resuelta.");
+    if (request.fromTeamId !== currentProfile?.teamId) throw new Error("Solo puedes cancelar tus propias solicitudes.");
+
+    await db.collection("lfm_transferRequests").doc(requestId).update({
+      status: "cancelled",
+      cancelledByUid: currentUser.uid,
+      cancelledByEmail: currentUser.email,
+      cancelledAtLabel: new Date().toISOString()
+    });
+
+    await loadTransferRequests();
+    render();
+    showMessage($("teamTransferMessage"), "Solicitud cancelada.", "success");
+  } catch (error) {
+    showMessage($("teamTransferMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function approveTransferRequest(event) {
+  const requestId = event.currentTarget.dataset.approveTransfer || "";
+  const request = transferRequestById(requestId);
+  const stop = setLoading(event.currentTarget, "Aprobando...");
+  showMessage($("adminTransferMessage"), "");
+  try {
+    if (!request || request.status !== "pending") throw new Error("Solicitud no encontrada o ya resuelta.");
+
+    const ok = window.confirm(`Aprobar transferencia de ${teamName(request.fromTeamId)} a ${teamName(request.toTeamId)} por ${moneyM(request.amountM)}?`);
+    if (!ok) {
+      showMessage($("adminTransferMessage"), "Aprobacion cancelada.");
+      return;
+    }
+
+    const nowLabel = new Date().toISOString();
+    await db.runTransaction(async (tx) => {
+      const requestRef = db.collection("lfm_transferRequests").doc(requestId);
+      const fromRef = db.collection("lfm_teams").doc(request.fromTeamId);
+      const toRef = db.collection("lfm_teams").doc(request.toTeamId);
+      const [requestDoc, fromDoc, toDoc] = await Promise.all([
+        tx.get(requestRef),
+        tx.get(fromRef),
+        tx.get(toRef)
+      ]);
+
+      if (!requestDoc.exists) throw new Error("La solicitud ya no existe.");
+      const freshRequest = normalizeTransferRequest({ id: requestDoc.id, ...requestDoc.data() });
+      if (freshRequest.status !== "pending") throw new Error("La solicitud ya fue resuelta.");
+      if (!fromDoc.exists || !toDoc.exists) throw new Error("Equipo emisor o receptor no encontrado.");
+      if ((freshRequest.seasonId || activeSeasonId()) !== activeSeasonId()) throw new Error("La solicitud pertenece a otra temporada.");
+
+      const amountM = moneyValue(freshRequest.amountM);
+      const fromBudget = moneyValue(fromDoc.data().budgetRemainingM);
+      const toBudget = moneyValue(toDoc.data().budgetRemainingM);
+      if (fromBudget < amountM) {
+        throw new Error(`${teamName(freshRequest.fromTeamId)} no tiene presupuesto suficiente para aprobar esta transferencia.`);
+      }
+
+      const now = firebase.firestore.FieldValue.serverTimestamp();
+      const fromMovementRef = db.collection("lfm_teamEconomy")
+        .doc(freshRequest.fromTeamId)
+        .collection("movements")
+        .doc();
+      const toMovementRef = db.collection("lfm_teamEconomy")
+        .doc(freshRequest.toTeamId)
+        .collection("movements")
+        .doc();
+
+      tx.update(fromRef, {
+        budgetRemainingM: moneyValue(fromBudget - amountM),
+        updatedAt: now
+      });
+      tx.update(toRef, {
+        budgetRemainingM: moneyValue(toBudget + amountM),
+        updatedAt: now
+      });
+
+      tx.set(fromMovementRef, {
+        seasonId: activeSeasonId(),
+        teamId: freshRequest.fromTeamId,
+        amountM: -amountM,
+        category: "transferencia",
+        limitScope: "none",
+        transferRequestId: requestId,
+        counterpartyTeamId: freshRequest.toTeamId,
+        concept: `Transferencia a ${teamName(freshRequest.toTeamId)}: ${freshRequest.concept}`,
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAt: now
+      });
+
+      tx.set(toMovementRef, {
+        seasonId: activeSeasonId(),
+        teamId: freshRequest.toTeamId,
+        amountM,
+        category: "transferencia",
+        limitScope: "none",
+        transferRequestId: requestId,
+        counterpartyTeamId: freshRequest.fromTeamId,
+        concept: `Transferencia de ${teamName(freshRequest.fromTeamId)}: ${freshRequest.concept}`,
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAt: now
+      });
+
+      tx.update(requestRef, {
+        status: "approved",
+        decidedByUid: currentUser.uid,
+        decidedByEmail: currentUser.email,
+        decidedAtLabel: nowLabel,
+        fromMovementId: fromMovementRef.id,
+        toMovementId: toMovementRef.id
+      });
+    });
+
+    await loadPublicData();
+    await loadTransferRequests();
+    if (isAdmin()) await loadAdminMovements();
+    render();
+    showMessage($("adminTransferMessage"), "Transferencia aprobada y presupuestos actualizados.", "success");
+  } catch (error) {
+    showMessage($("adminTransferMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function rejectTransferRequest(event) {
+  const requestId = event.currentTarget.dataset.rejectTransfer || "";
+  const request = transferRequestById(requestId);
+  const stop = setLoading(event.currentTarget, "Rechazando...");
+  showMessage($("adminTransferMessage"), "");
+  try {
+    if (!request || request.status !== "pending") throw new Error("Solicitud no encontrada o ya resuelta.");
+    const ok = window.confirm(`Rechazar transferencia de ${teamName(request.fromTeamId)} a ${teamName(request.toTeamId)}?`);
+    if (!ok) {
+      showMessage($("adminTransferMessage"), "Rechazo cancelado.");
+      return;
+    }
+
+    await db.collection("lfm_transferRequests").doc(requestId).update({
+      status: "rejected",
+      decidedByUid: currentUser.uid,
+      decidedByEmail: currentUser.email,
+      decidedAtLabel: new Date().toISOString()
+    });
+
+    await loadTransferRequests();
+    render();
+    showMessage($("adminTransferMessage"), "Transferencia rechazada.", "success");
+  } catch (error) {
+    showMessage($("adminTransferMessage"), translateError(error), "error");
   } finally {
     stop();
   }
