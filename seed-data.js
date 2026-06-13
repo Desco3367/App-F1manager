@@ -7,6 +7,7 @@ window.LFM_SEED = {
     completedRaces: 2,
     developmentLimitM: 40,
     motorLimitM: 36,
+    motorRaceLimitM: 6,
     currentRaceWindow: {
       raceId: "",
       label: "",

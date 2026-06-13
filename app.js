@@ -24,6 +24,7 @@ let currentAdminTab = "base";
 let currentAdminCarTab = "resumen";
 let currentAdminCarRequestTeamFilter = "";
 let currentAdminWeightRequestTeamFilter = "";
+let currentAdminEngineRequestTeamFilter = "";
 let currentTeamTab = "resumen";
 const AUTO_REFRESH_MS = 10000;
 let autoRefreshTimer = null;
@@ -773,6 +774,74 @@ function allPendingWeightRequests(teams) {
 
 function allWeightRequests(teams) {
   return teams.flatMap((team) => weightRequests(team.id).map((request) => ({ team, request })));
+}
+
+function motorRunCostM(attemptCount) {
+  const attempts = Number(attemptCount || 0);
+  const unit = Number(window.LFM_SEED.costs.motorRunM || 1);
+  if (!Number.isFinite(attempts) || !Number.isFinite(unit)) return 0;
+  return moneyValue(attempts * unit);
+}
+
+function engineRaceLimitM() {
+  const season = cache.season || window.LFM_SEED.season || {};
+  const value = Number(season.motorRaceLimitM ?? 6);
+  return Number.isFinite(value) && value >= 0 ? moneyValue(value) : 6;
+}
+
+function engineRaceSpentFromMovements(movements, raceId, excludeRequestId = "") {
+  if (!raceId) return 0;
+  return moneyValue(
+    (Array.isArray(movements) ? movements : [])
+      .filter((move) => (
+        (move.seasonId || activeSeasonId()) === activeSeasonId()
+        && move.raceId === raceId
+        && move.limitScope === "motor"
+        && Number(move.amountM || 0) < 0
+        && (!excludeRequestId || move.engineRequestId !== excludeRequestId)
+      ))
+      .reduce((sum, move) => sum + Math.abs(Number(move.amountM || 0)), 0)
+  );
+}
+
+function engineRaceSpentM(teamId, raceId, excludeRequestId = "") {
+  const movements = cache.teamMovements.get(teamId) || (currentProfile?.teamId === teamId ? cache.movements : []);
+  return engineRaceSpentFromMovements(movements, raceId, excludeRequestId);
+}
+
+function engineRequests(teamId) {
+  return (carSelection(teamId).engineRequests || [])
+    .filter((request) => request && request.seasonId === activeSeasonId())
+    .map((request) => {
+      const attemptCount = Number(request.attemptCount || 0);
+      return {
+        ...request,
+        attemptCount,
+        costM: Number(request.costM ?? motorRunCostM(attemptCount)),
+        status: request.status || "pending",
+        note: String(request.note || "")
+      };
+    });
+}
+
+function pendingEngineRequests(teamId) {
+  return engineRequests(teamId).filter((request) => request.status === "pending");
+}
+
+function engineRequestById(teamId, requestId) {
+  return engineRequests(teamId).find((request) => request.id === requestId) || null;
+}
+
+function allPendingEngineRequests(teams) {
+  return teams
+    .filter((team) => team.isMotorist)
+    .flatMap((team) => pendingEngineRequests(team.id).map((request) => ({ team, request })));
+}
+
+function allEngineRequests(teams) {
+  return teams
+    .filter((team) => team.isMotorist)
+    .flatMap((team) => engineRequests(team.id).map((request) => ({ team, request })));
 }
 
 function weightRequestPieceOptions(teamId, selectedPieceId = "") {
@@ -3388,6 +3457,10 @@ function renderTeam() {
   document.querySelectorAll("[data-cancel-team-weight-request]").forEach((button) => {
     button.addEventListener("click", cancelTeamWeightRequest);
   });
+  $("teamEngineRequestForm")?.addEventListener("submit", saveTeamEngineRequest);
+  document.querySelectorAll("[data-cancel-team-engine-request]").forEach((button) => {
+    button.addEventListener("click", cancelTeamEngineRequest);
+  });
   wireTeamCarTabs();
   wireTeamCarPreviewControls();
 }
@@ -3701,6 +3774,9 @@ function renderSeasonSwitchAdmin(season) {
           <label>Limite motor en M
             <input id="newSeasonMotorLimit" type="number" min="0" step="0.001" value="${html(season?.motorLimitM || 0)}" required />
           </label>
+          <label>Limite motor por GP en M
+            <input id="newSeasonMotorRaceLimit" type="number" min="0" step="0.001" value="${html(season?.motorRaceLimitM ?? 6)}" required />
+          </label>
         </section>
         <label>Calendario
           <select id="newSeasonCalendarMode">
@@ -3984,6 +4060,22 @@ function renderAdmin() {
     </article>
 
     <section class="grid two" data-admin-panel="motor">
+      <article class="card">
+        <div class="card-header">
+          <h3>Solicitudes de motor</h3>
+          <span class="pill">Mejoras GP</span>
+        </div>
+        ${renderAdminEngineRequests(teams)}
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h3>Limite motor por GP</h3>
+          <span class="pill">${moneyM(engineRaceLimitM())}</span>
+        </div>
+        ${renderEngineRaceLimitAdmin(teams)}
+      </article>
+
       <article class="card">
         <div class="card-header">
           <h3>Registrar motor</h3>
@@ -4329,6 +4421,17 @@ function renderAdmin() {
   $("legacyEngineImportForm").addEventListener("submit", prepareLegacyEngines);
   $("engineImportAssignForm")?.addEventListener("submit", saveLegacyEngineAssignments);
   $("enginePaymentForm").addEventListener("submit", saveEngineClientPayment);
+  $("engineRaceLimitForm")?.addEventListener("submit", saveEngineRaceLimit);
+  $("adminEngineRequestTeamFilter")?.addEventListener("change", (event) => {
+    currentAdminEngineRequestTeamFilter = event.target.value;
+    render();
+  });
+  document.querySelectorAll("[data-apply-engine-request]").forEach((button) => {
+    button.addEventListener("click", applyEngineRequest);
+  });
+  document.querySelectorAll("[data-cancel-engine-request]").forEach((button) => {
+    button.addEventListener("click", cancelEngineRequest);
+  });
   $("engineRunTeam").addEventListener("change", renderEngineRunPreview);
   $("engineRunStat").addEventListener("change", renderEngineRunPreview);
   $("engineRunMode").addEventListener("change", renderEngineRunPreview);
@@ -5548,6 +5651,122 @@ function renderEngineHistory(history, limit = 10) {
   `;
 }
 
+function renderEngineAttemptSummary(attempts = []) {
+  if (!Array.isArray(attempts) || !attempts.length) return "";
+  return attempts
+    .map((attempt) => `${html(attempt.resultName || "-")} ${formatSignedDelta(attempt.delta)} (${html(attempt.valueBefore)}->${html(attempt.valueAfter)})`)
+    .join(", ");
+}
+
+function engineRacePendingCostM(teamId, raceId) {
+  if (!raceId) return 0;
+  return moneyValue(
+    pendingEngineRequests(teamId)
+      .filter((request) => request.raceId === raceId)
+      .reduce((sum, request) => sum + Number(request.costM || 0), 0)
+  );
+}
+
+function renderEngineRequestHistory(teamId) {
+  const requests = engineRequests(teamId);
+  const developmentOpen = isDevelopmentWindowOpen();
+  if (!requests.length) {
+    return `<div class="empty">Todavia no hay solicitudes de motor registradas.</div>`;
+  }
+
+  return `
+    <div class="car-request-list">
+      ${requests.slice().reverse().map((request) => {
+        const stat = engineStatById(request.statId);
+        const mode = engineModes().find((item) => item.id === request.modeId);
+        const resultText = renderEngineAttemptSummary(request.attempts);
+        return `
+          <article class="car-request-card">
+            <div class="car-piece-head">
+              <div>
+                <strong>${html(stat?.name || request.statId)}</strong>
+                <span>${html(request.attemptCount)} intentos - ${html(mode?.name || request.modeId || "-")} - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+              </div>
+              <span class="pill ${carRequestStatusClass(request.status)}">${html(carRequestStatusLabel(request.status))}</span>
+            </div>
+            <p>${html(request.note || "Sin nota")}</p>
+            <small>
+              ${resultText ? `Resultado: ${resultText}` : ""}
+              ${request.cancelReason ? `Motivo: ${html(request.cancelReason)}` : ""}
+            </small>
+            ${request.status === "pending" ? `
+              <div class="request-actions">
+                <button
+                  type="button"
+                  class="ghost danger-action"
+                  data-cancel-team-engine-request="${html(request.id)}"
+                  ${developmentOpen ? "" : "disabled"}
+                >${developmentOpen ? "Arrepentirse" : "Mejoras cerradas"}</button>
+              </div>
+            ` : ""}
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderTeamEngineRequestPanel(team) {
+  const developmentOpen = isDevelopmentWindowOpen();
+  const raceWindow = currentRaceWindow();
+  const raceId = raceWindow.raceId || "";
+  const limitM = engineRaceLimitM();
+  const spentM = engineRaceSpentM(team.id, raceId);
+  const pendingCostM = engineRacePendingCostM(team.id, raceId);
+  const availableM = moneyValue(limitM - spentM - pendingCostM);
+  const unitCostM = motorRunCostM(1) || 1;
+  const maxAttemptsByLimit = Math.max(0, Math.floor(availableM / unitCostM));
+  const maxAttempts = Math.max(1, Math.min(20, maxAttemptsByLimit || 0));
+  const blocked = !developmentOpen || availableM < unitCostM;
+
+  return `
+    <section class="car-request-panel">
+      <div class="card-header">
+        <div>
+          <h4>Solicitar mejora de motor</h4>
+          <p class="muted">Pide intentos de motor para el GP actual. Admin aplica el resultado y cobra el coste.</p>
+        </div>
+        <span class="pill ${availableM < unitCostM ? "warn-pill" : ""}">${moneyM(Math.max(0, availableM))} disponible GP</span>
+      </div>
+      <div class="list compact">
+        <div class="list-row"><strong>Limite GP</strong><span>${moneyM(limitM)}</span></div>
+        <div class="list-row"><strong>Gastado aplicado</strong><span>${moneyM(spentM)}</span></div>
+        <div class="list-row"><strong>Pendiente solicitado</strong><span>${moneyM(pendingCostM)}</span></div>
+      </div>
+      <form id="teamEngineRequestForm" class="form car-request-form">
+        <section class="grid two flat-grid">
+          <label>Stat
+            <select id="teamEngineRequestStat" ${blocked ? "disabled" : ""}>
+              ${engineStats().map((stat) => `<option value="${html(stat.id)}">${html(stat.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Modo
+            <select id="teamEngineRequestMode" ${blocked ? "disabled" : ""}>
+              ${engineModes().map((mode) => `<option value="${html(mode.id)}" ${mode.id === "normal" ? "selected" : ""}>${html(mode.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>Intentos
+            <input id="teamEngineRequestAttempts" type="number" min="1" max="${html(maxAttempts)}" step="1" value="1" ${blocked ? "disabled" : ""} required />
+          </label>
+          <label>Nota
+            <input id="teamEngineRequestNote" maxlength="120" placeholder="Ej: empujar ERS para este GP..." ${blocked ? "disabled" : ""} />
+          </label>
+        </section>
+        <button type="submit" ${blocked ? "disabled" : ""}>Enviar solicitud</button>
+        <p id="teamEngineRequestMessage" class="message"></p>
+      </form>
+      ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
+      ${developmentOpen && availableM < unitCostM ? `<p class="warning-text">No queda margen de motor para este GP.</p>` : ""}
+      ${renderEngineRequestHistory(team.id)}
+    </section>
+  `;
+}
+
 function renderTeamEngine(team) {
   if (cache.engineLoadError) {
     return `<div class="empty">${html(cache.engineLoadError)} Revisa las reglas privadas de motores.</div>`;
@@ -5559,6 +5778,7 @@ function renderTeamEngine(team) {
   const engine = engineDoc(team.id);
   const summary = motorSummary(team.id);
   return `
+    ${renderTeamEngineRequestPanel(team)}
     <div class="engine-hero">
       <div>
         <p class="eyebrow">${html(team.name)}</p>
@@ -5636,6 +5856,134 @@ function renderAdminEnginesOverview(teams) {
         </tbody>
       </table>
     </div>
+  `;
+}
+
+function renderAdminEngineRequests(teams) {
+  const motorists = teams.filter((team) => team.isMotorist);
+  const pending = allPendingEngineRequests(motorists);
+  const allRequests = allEngineRequests(motorists)
+    .sort((a, b) => String(b.request.createdAtLabel || "").localeCompare(String(a.request.createdAtLabel || "")));
+  const selectedTeam = motorists.some((team) => team.id === currentAdminEngineRequestTeamFilter)
+    ? currentAdminEngineRequestTeamFilter
+    : "";
+  currentAdminEngineRequestTeamFilter = selectedTeam;
+  const visiblePending = selectedTeam
+    ? pending.filter(({ team }) => team.id === selectedTeam)
+    : pending;
+  const visibleHistory = (selectedTeam
+    ? allRequests.filter(({ team }) => team.id === selectedTeam)
+    : allRequests).slice(0, 12);
+
+  return `
+    <div class="form">
+      <label>Filtrar por motorista
+        <select id="adminEngineRequestTeamFilter">
+          <option value="">Todos los motoristas</option>
+          ${motorists.map((team) => `
+            <option value="${html(team.id)}" ${team.id === selectedTeam ? "selected" : ""}>${html(team.name)}</option>
+          `).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="card-header compact-header">
+      <h4>Pendientes</h4>
+      <span class="pill">${html(visiblePending.length)} de ${html(pending.length)}</span>
+    </div>
+    ${pending.length ? `<p class="warning-text">La seleccion no puede abrirse hasta aplicar o cancelar estas solicitudes.</p>` : ""}
+    ${visiblePending.length ? `
+      <div class="car-request-admin-list">
+        ${visiblePending.map(({ team, request }) => {
+          const stat = engineStatById(request.statId);
+          const mode = engineModes().find((item) => item.id === request.modeId);
+          return `
+            <article class="car-request-card">
+              <div class="car-piece-head">
+                <div>
+                  <strong>${html(team.name)} - ${html(stat?.name || request.statId)}</strong>
+                  <span>${html(request.attemptCount)} intentos - ${html(mode?.name || request.modeId || "-")} - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+                </div>
+                <span class="pill warn-pill">Pendiente</span>
+              </div>
+              <p>${html(request.note || "Sin nota")}</p>
+              <div class="request-actions">
+                <button type="button" class="ghost" data-apply-engine-request="${html(team.id)}:${html(request.id)}">Aplicar intentos</button>
+                <button type="button" class="ghost danger-action" data-cancel-engine-request="${html(team.id)}:${html(request.id)}">Cancelar</button>
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `<div class="empty">${pending.length ? "No hay solicitudes pendientes para este motorista." : "No hay solicitudes pendientes."}</div>`}
+    <div class="form-divider"></div>
+    <h4 class="subsection-title">Historial de solicitudes</h4>
+    ${visibleHistory.length ? `
+      <div class="car-request-list">
+        ${visibleHistory.map(({ team, request }) => {
+          const stat = engineStatById(request.statId);
+          const mode = engineModes().find((item) => item.id === request.modeId);
+          const resultText = renderEngineAttemptSummary(request.attempts);
+          return `
+            <article class="car-request-card">
+              <div class="car-piece-head">
+                <div>
+                  <strong>${html(team.name)} - ${html(stat?.name || request.statId)}</strong>
+                  <span>${html(request.attemptCount)} intentos - ${html(mode?.name || request.modeId || "-")} - ${moneyM(request.costM)} - ${html(request.raceLabel || "Sin GP")}</span>
+                </div>
+                <span class="pill ${carRequestStatusClass(request.status)}">${html(carRequestStatusLabel(request.status))}</span>
+              </div>
+              <small>
+                ${resultText ? `Resultado: ${resultText}` : html(request.note || "Sin nota")}
+                ${request.cancelReason ? ` - Motivo: ${html(request.cancelReason)}` : ""}
+              </small>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : `<div class="empty">Todavia no hay solicitudes de motor registradas.</div>`}
+    <p id="adminEngineRequestMessage" class="message"></p>
+  `;
+}
+
+function renderEngineRaceLimitAdmin(teams) {
+  const raceWindow = currentRaceWindow();
+  const raceId = raceWindow.raceId || "";
+  const limitM = engineRaceLimitM();
+  const motorists = teams.filter((team) => team.isMotorist);
+
+  return `
+    <form id="engineRaceLimitForm" class="form">
+      <p class="muted">Limite maximo que puede gastar cada motorista en mejoras de motor por GP. Si la temporada no tiene valor guardado, se usa 6M.</p>
+      <label>Limite motor por GP en M
+        <input id="engineRaceLimitInput" type="number" min="0" step="0.001" value="${html(limitM)}" required />
+      </label>
+      <button type="submit" class="ghost">Guardar limite</button>
+      <p id="engineRaceLimitMessage" class="message"></p>
+    </form>
+    <div class="form-divider"></div>
+    <h4 class="subsection-title">${raceId ? `Uso actual en ${html(currentRaceWindowLabel())}` : "Uso actual por GP"}</h4>
+    ${raceId ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Motorista</th><th>Aplicado</th><th>Pendiente</th><th>Disponible</th></tr></thead>
+          <tbody>
+            ${motorists.map((team) => {
+              const spentM = engineRaceSpentM(team.id, raceId);
+              const pendingM = engineRacePendingCostM(team.id, raceId);
+              const availableM = moneyValue(limitM - spentM - pendingM);
+              return `
+                <tr>
+                  <td><strong>${html(team.name)}</strong></td>
+                  <td>${moneyM(spentM)}</td>
+                  <td>${moneyM(pendingM)}</td>
+                  <td class="${availableM < 0 ? "negative" : "positive"}">${moneyM(availableM)}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    ` : `<div class="empty">Abre o selecciona un GP para ver el uso por carrera.</div>`}
   `;
 }
 
@@ -6214,7 +6562,8 @@ function renderRaceWindowAdmin() {
   const requestTeams = cache.teams.length ? cache.teams : window.LFM_SEED.teams || [];
   const pendingCarCount = allPendingCarRequests(requestTeams).length;
   const pendingWeightCount = allPendingWeightRequests(requestTeams).length;
-  const pendingCount = pendingCarCount + pendingWeightCount;
+  const pendingEngineCount = allPendingEngineRequests(requestTeams).length;
+  const pendingCount = pendingCarCount + pendingWeightCount + pendingEngineCount;
 
   if (!races.length) {
     return `<div class="empty">Todavia no hay calendario cargado.</div>`;
@@ -6251,7 +6600,7 @@ function renderRaceWindowAdmin() {
         <button id="openSelectionWindowBtn" type="button" ${anyOpen || pendingCount ? "disabled" : ""}>Abrir seleccion</button>
         <button id="closeRaceWindowBtn" class="ghost" type="button" ${selectionOpen ? "" : "disabled"}>Cerrar seleccion y aplicar</button>
       </div>
-      ${pendingCount ? `<p class="warning-text">No puedes abrir seleccion: quedan ${html(pendingCarCount)} solicitudes de coche y ${html(pendingWeightCount)} solicitudes de peso pendientes.</p>` : ""}
+      ${pendingCount ? `<p class="warning-text">No puedes abrir seleccion: quedan ${html(pendingCarCount)} solicitudes de coche, ${html(pendingWeightCount)} de peso y ${html(pendingEngineCount)} de motor pendientes.</p>` : ""}
       <p id="raceWindowMessage" class="message"></p>
     </section>
   `;
@@ -9079,6 +9428,7 @@ async function createSeason(event) {
     const name = $("newSeasonName").value.trim();
     const developmentLimitM = Number($("newSeasonDevelopmentLimit").value);
     const motorLimitM = Number($("newSeasonMotorLimit").value);
+    const motorRaceLimitM = Number($("newSeasonMotorRaceLimit").value);
     const calendarMode = $("newSeasonCalendarMode")?.value || "copy-current";
     const activate = $("newSeasonActivate").checked;
 
@@ -9086,6 +9436,7 @@ async function createSeason(event) {
     if (!name) throw new Error("Completa el nombre de la temporada.");
     if (!Number.isFinite(developmentLimitM) || developmentLimitM < 0) throw new Error("Limite de desarrollo no valido.");
     if (!Number.isFinite(motorLimitM) || motorLimitM < 0) throw new Error("Limite motor no valido.");
+    if (!Number.isFinite(motorRaceLimitM) || motorRaceLimitM < 0) throw new Error("Limite motor por GP no valido.");
 
     const existing = await db.collection("lfm_seasons").doc(seasonId).get();
     if (existing.exists) throw new Error(`La temporada ${seasonId.toUpperCase()} ya existe.`);
@@ -9102,6 +9453,7 @@ async function createSeason(event) {
       completedRaces: 0,
       developmentLimitM,
       motorLimitM,
+      motorRaceLimitM: moneyValue(motorRaceLimitM),
       currentRaceWindow: {
         raceId: "",
         label: "",
@@ -9270,9 +9622,10 @@ async function openSelectionWindow(event) {
 
     const pendingCarCount = allPendingCarRequests(cache.teams).length;
     const pendingWeightCount = allPendingWeightRequests(cache.teams).length;
-    const pendingCount = pendingCarCount + pendingWeightCount;
+    const pendingEngineCount = allPendingEngineRequests(cache.teams).length;
+    const pendingCount = pendingCarCount + pendingWeightCount + pendingEngineCount;
     if (pendingCount) {
-      throw new Error(`No puedes abrir seleccion: quedan ${pendingCarCount} solicitudes de coche y ${pendingWeightCount} solicitudes de peso pendientes.`);
+      throw new Error(`No puedes abrir seleccion: quedan ${pendingCarCount} solicitudes de coche, ${pendingWeightCount} de peso y ${pendingEngineCount} de motor pendientes.`);
     }
 
     const race = selectedRaceWindowRace();
@@ -9749,6 +10102,188 @@ async function saveMovement(event) {
   }
 }
 
+async function applyEngineRuns({
+  teamId,
+  statId,
+  modeId,
+  attemptCount,
+  shouldCharge = true,
+  requestId = "",
+  raceId = "",
+  raceLabelText = ""
+}) {
+  const stat = engineStatById(statId);
+  const mode = engineModes().find((item) => item.id === modeId);
+  if (!cache.teamMap.get(teamId)?.isMotorist) throw new Error("Selecciona un equipo motorista.");
+  if (!stat) throw new Error("Stat de motor no encontrado.");
+  if (!mode) throw new Error("Modo de desarrollo no encontrado.");
+  if (!Number.isInteger(attemptCount) || attemptCount < 1 || attemptCount > 20) {
+    throw new Error("Los intentos deben estar entre 1 y 20.");
+  }
+
+  const costM = shouldCharge ? motorRunCostM(attemptCount) : 0;
+  if (shouldCharge && costM <= 0) throw new Error("Coste de intentos no configurado.");
+
+  const selectedRaceId = raceId || currentRaceWindow().raceId || "";
+  const selectedRaceLabel = raceLabelText || (selectedRaceId ? raceLabel(raceById(selectedRaceId)) || currentRaceWindowLabel() : "");
+  if (shouldCharge && costM > 0) {
+    if (!selectedRaceId) {
+      throw new Error("Abre un plazo de GP para aplicar intentos de motor con limite por carrera.");
+    }
+    const freshMovements = await loadTeamMovements(teamId, 500);
+    cache.teamMovements.set(teamId, freshMovements);
+    const spentM = engineRaceSpentFromMovements(freshMovements, selectedRaceId, requestId);
+    const limitM = engineRaceLimitM();
+    if (moneyValue(spentM + costM) > moneyValue(limitM) + 0.0001) {
+      throw new Error(`Limite de motor por GP superado: ${teamName(teamId)} ya gasto ${moneyM(spentM)} y esta mejora cuesta ${moneyM(costM)}. Limite: ${moneyM(limitM)}.`);
+    }
+  }
+
+  const createdAtLabel = new Date().toISOString();
+  const eventId = `engine-${statId}-${Date.now().toString(36)}`;
+  let savedEntry = null;
+
+  await db.runTransaction(async (tx) => {
+    const engineRef = db.collection("lfm_teamEngines").doc(teamId);
+    const teamRef = db.collection("lfm_teams").doc(teamId);
+    const selectionRef = requestId ? db.collection("lfm_carSelections").doc(teamId) : null;
+    const engineSnap = await tx.get(engineRef);
+    const teamSnap = shouldCharge && costM > 0 ? await tx.get(teamRef) : null;
+    const selectionSnap = selectionRef ? await tx.get(selectionRef) : null;
+
+    if (shouldCharge && costM > 0 && !teamSnap.exists) {
+      throw new Error("Equipo motorista no encontrado.");
+    }
+
+    const selectionData = selectionSnap?.exists ? selectionSnap.data() : {};
+    const requestList = Array.isArray(selectionData.engineRequests) ? selectionData.engineRequests : [];
+    const requestIndex = requestId
+      ? requestList.findIndex((request) => request.id === requestId && request.status === "pending")
+      : -1;
+
+    if (requestId) {
+      if (requestIndex < 0) throw new Error("Solicitud de motor no encontrada o ya resuelta.");
+      const request = requestList[requestIndex];
+      if (request.statId !== statId || request.modeId !== modeId || Number(request.attemptCount || 0) !== attemptCount) {
+        throw new Error("La solicitud de motor no coincide con los intentos a aplicar.");
+      }
+    }
+
+    const team = cache.teamMap.get(teamId);
+    const data = engineSnap.exists ? engineSnap.data() : {};
+    const stats = normalizeEngineStats(data.stats || {});
+    let currentValue = stats[statId];
+    const attempts = [];
+
+    for (let index = 0; index < attemptCount; index += 1) {
+      const attempt = runEngineAttempt(statId, currentValue, modeId);
+      attempts.push({ ...attempt, attempt: index + 1 });
+      currentValue = attempt.valueAfter;
+    }
+
+    if (!attempts.length) throw new Error("No se pudo registrar ningun intento.");
+
+    const history = Array.isArray(data.history) ? data.history : [];
+    const entry = {
+      id: eventId,
+      type: "runs",
+      seasonId: activeSeasonId(),
+      teamId,
+      statId,
+      modeId,
+      attemptCount,
+      costM,
+      valueBefore: attempts[0].valueBefore,
+      valueAfter: currentValue,
+      attempts,
+      requestId: requestId || "",
+      raceId: selectedRaceId,
+      raceLabel: selectedRaceLabel,
+      createdAtLabel,
+      createdByUid: currentUser.uid,
+      createdByEmail: currentUser.email
+    };
+    savedEntry = entry;
+
+    const now = firebase.firestore.FieldValue.serverTimestamp();
+    tx.set(engineRef, {
+      teamId,
+      seasonId: activeSeasonId(),
+      engineName: data.engineName || `Motor ${team?.name || teamId}`,
+      clients: team?.motorClients || [],
+      stats: {
+        [statId]: currentValue
+      },
+      history: [...history, entry].slice(-160),
+      lastEngineUpdateAt: now,
+      updatedAt: now
+    }, { merge: true });
+
+    if (shouldCharge && costM > 0) {
+      const currentBudget = Number(teamSnap.data().budgetRemainingM || 0);
+      const amountM = -costM;
+      tx.update(teamRef, {
+        budgetRemainingM: Math.round((currentBudget + amountM) * 1000) / 1000,
+        updatedAt: now
+      });
+
+      const movementRef = db.collection("lfm_teamEconomy")
+        .doc(teamId)
+        .collection("movements")
+        .doc();
+
+      tx.set(movementRef, {
+        seasonId: activeSeasonId(),
+        teamId,
+        amountM,
+        category: "motor",
+        limitScope: "motor",
+        statId,
+        modeId,
+        attemptCount,
+        valueBefore: entry.valueBefore,
+        valueAfter: currentValue,
+        attempts,
+        engineAction: "runs",
+        engineRequestId: requestId || "",
+        raceId: selectedRaceId,
+        raceLabel: selectedRaceLabel,
+        concept: `Motor ${stat.name}: ${attemptCount} intentos ${mode.name}${requestId ? " (solicitud equipo)" : ""}`,
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAt: now
+      });
+    }
+
+    if (requestId && selectionRef) {
+      const nextRequests = requestList.map((request, index) => (
+        index === requestIndex
+          ? {
+              ...request,
+              status: "completed",
+              resolvedEngineEntryId: entry.id,
+              resolvedCostM: costM,
+              valueBefore: entry.valueBefore,
+              valueAfter: currentValue,
+              attempts,
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        engineRequests: nextRequests,
+        updatedAt: now
+      }, { merge: true });
+    }
+  });
+
+  return savedEntry;
+}
+
 async function saveEngineRuns(event) {
   event.preventDefault();
   const stop = setLoading(event.submitter, "Registrando...");
@@ -9760,122 +10295,27 @@ async function saveEngineRuns(event) {
     const attemptCount = Number($("engineRunCount").value);
     const shouldCharge = $("engineRunCharge").checked;
     const stat = engineStatById(statId);
-    const mode = engineModes().find((item) => item.id === modeId);
 
-    if (!cache.teamMap.get(teamId)?.isMotorist) throw new Error("Selecciona un equipo motorista.");
-    if (!stat) throw new Error("Stat de motor no encontrado.");
-    if (!mode) throw new Error("Modo de desarrollo no encontrado.");
-    if (!Number.isInteger(attemptCount) || attemptCount < 1 || attemptCount > 20) {
-      throw new Error("Los intentos deben estar entre 1 y 20.");
-    }
-
-    const costM = shouldCharge
-      ? Math.round(attemptCount * Number(window.LFM_SEED.costs.motorRunM || 1) * 1000) / 1000
-      : 0;
-    const createdAtLabel = new Date().toISOString();
-    const eventId = `engine-${statId}-${Date.now().toString(36)}`;
-    let savedEntry = null;
-
-    await db.runTransaction(async (tx) => {
-      const engineRef = db.collection("lfm_teamEngines").doc(teamId);
-      const teamRef = db.collection("lfm_teams").doc(teamId);
-      const engineSnap = await tx.get(engineRef);
-      const teamSnap = shouldCharge && costM > 0 ? await tx.get(teamRef) : null;
-
-      if (shouldCharge && costM > 0 && !teamSnap.exists) {
-        throw new Error("Equipo motorista no encontrado.");
-      }
-
-      const team = cache.teamMap.get(teamId);
-      const data = engineSnap.exists ? engineSnap.data() : {};
-      const stats = normalizeEngineStats(data.stats || {});
-      let currentValue = stats[statId];
-      const attempts = [];
-
-      for (let index = 0; index < attemptCount; index += 1) {
-        const attempt = runEngineAttempt(statId, currentValue, modeId);
-        attempts.push({ ...attempt, attempt: index + 1 });
-        currentValue = attempt.valueAfter;
-      }
-
-      if (!attempts.length) throw new Error("No se pudo registrar ningun intento.");
-
-      const history = Array.isArray(data.history) ? data.history : [];
-      const entry = {
-        id: eventId,
-        type: "runs",
-        seasonId: activeSeasonId(),
-        teamId,
-        statId,
-        modeId,
-        attemptCount,
-        costM,
-        valueBefore: attempts[0].valueBefore,
-        valueAfter: currentValue,
-        attempts,
-        createdAtLabel,
-        createdByUid: currentUser.uid,
-        createdByEmail: currentUser.email
-      };
-      savedEntry = entry;
-
-      const now = firebase.firestore.FieldValue.serverTimestamp();
-      tx.set(engineRef, {
-        teamId,
-        seasonId: activeSeasonId(),
-        engineName: data.engineName || `Motor ${team?.name || teamId}`,
-        clients: team?.motorClients || [],
-        stats: {
-          [statId]: currentValue
-        },
-        history: [...history, entry].slice(-160),
-        lastEngineUpdateAt: now,
-        updatedAt: now
-      }, { merge: true });
-
-      if (shouldCharge && costM > 0) {
-        const currentBudget = Number(teamSnap.data().budgetRemainingM || 0);
-        const amountM = -costM;
-        tx.update(teamRef, {
-          budgetRemainingM: Math.round((currentBudget + amountM) * 1000) / 1000,
-          updatedAt: now
-        });
-
-        const movementRef = db.collection("lfm_teamEconomy")
-          .doc(teamId)
-          .collection("movements")
-          .doc();
-
-        tx.set(movementRef, {
-          seasonId: activeSeasonId(),
-          teamId,
-          amountM,
-          category: "motor",
-          limitScope: "motor",
-          statId,
-          modeId,
-          attemptCount,
-          valueBefore: entry.valueBefore,
-          valueAfter: currentValue,
-          attempts,
-          concept: `Motor ${stat.name}: ${attemptCount} intentos ${mode.name}`,
-          createdByUid: currentUser.uid,
-          createdByEmail: currentUser.email,
-          createdAt: now
-        });
-      }
+    const savedEntry = await applyEngineRuns({
+      teamId,
+      statId,
+      modeId,
+      attemptCount,
+      shouldCharge
     });
 
     event.target.reset();
     await loadPublicData();
     if (isAdmin()) await loadAdminMovements();
     await loadEngineData();
+    await loadCarData();
     render();
 
-    const resultText = savedEntry.attempts
-      .map((attempt) => `${attempt.resultName} ${formatSignedDelta(attempt.delta)} (${attempt.valueBefore}->${attempt.valueAfter})`)
-      .join(", ");
-    showMessage($("engineMessage"), `${teamName(teamId)} ${stat.name}: ${resultText}. Coste ${moneyM(savedEntry.costM)}.`, "success");
+    showMessage(
+      $("engineMessage"),
+      `${teamName(teamId)} ${stat?.name || statId}: ${renderEngineAttemptSummary(savedEntry.attempts)}. Coste ${moneyM(savedEntry.costM)}.`,
+      "success"
+    );
   } catch (error) {
     showMessage($("engineMessage"), translateError(error), "error");
   } finally {
@@ -9949,6 +10389,259 @@ async function saveEngineManualStat(event) {
     showMessage($("engineMessage"), `${teamName(teamId)} ${stat.name}: ${valueBefore} -> ${Math.round(value * 100) / 100}.`, "success");
   } catch (error) {
     showMessage($("engineMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function saveEngineRaceLimit(event) {
+  event.preventDefault();
+  const stop = setLoading(event.submitter, "Guardando...");
+  showMessage($("engineRaceLimitMessage"), "");
+  try {
+    const motorRaceLimitM = Number($("engineRaceLimitInput").value);
+    if (!Number.isFinite(motorRaceLimitM) || motorRaceLimitM < 0) {
+      throw new Error("Limite motor por GP no valido.");
+    }
+
+    await db.collection("lfm_seasons").doc(activeSeasonId()).set({
+      motorRaceLimitM: moneyValue(motorRaceLimitM),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    showMessage($("engineRaceLimitMessage"), "Limite motor por GP guardado.", "success");
+    await loadPublicData();
+    render();
+  } catch (error) {
+    showMessage($("engineRaceLimitMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function saveTeamEngineRequest(event) {
+  event.preventDefault();
+  const stop = setLoading(event.submitter, "Enviando...");
+  showMessage($("teamEngineRequestMessage"), "");
+  try {
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
+    }
+
+    const teamId = currentProfile?.teamId;
+    const team = cache.teamMap.get(teamId);
+    if (!teamId) throw new Error("Perfil sin equipo.");
+    if (!team?.isMotorist) throw new Error("Solo los equipos motoristas pueden solicitar mejoras de motor.");
+
+    const statId = $("teamEngineRequestStat").value;
+    const modeId = $("teamEngineRequestMode").value;
+    const attemptCount = Number($("teamEngineRequestAttempts").value);
+    const note = $("teamEngineRequestNote").value.trim();
+    const stat = engineStatById(statId);
+    const mode = engineModes().find((item) => item.id === modeId);
+    const costM = motorRunCostM(attemptCount);
+    const raceWindow = currentRaceWindow();
+    const raceId = raceWindow.raceId || "";
+
+    if (!stat) throw new Error("Stat de motor no encontrado.");
+    if (!mode) throw new Error("Modo de desarrollo no encontrado.");
+    if (!Number.isInteger(attemptCount) || attemptCount < 1 || attemptCount > 20) {
+      throw new Error("Los intentos deben estar entre 1 y 20.");
+    }
+    if (costM <= 0) throw new Error("Coste de intentos no configurado.");
+
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.engineRequests) ? data.engineRequests : [];
+      const pending = requests.filter((request) => request.seasonId === activeSeasonId() && request.status === "pending");
+      const pendingRaceCostM = moneyValue(
+        pending
+          .filter((request) => request.raceId === raceId)
+          .reduce((sum, request) => sum + Number(request.costM || 0), 0)
+      );
+      const spentM = engineRaceSpentM(teamId, raceId);
+      const limitM = engineRaceLimitM();
+
+      if (moneyValue(spentM + pendingRaceCostM + costM) > moneyValue(limitM) + 0.0001) {
+        throw new Error(`No queda margen de motor para este GP. Disponible: ${moneyM(limitM - spentM - pendingRaceCostM)}.`);
+      }
+
+      const request = {
+        id: `ereq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        seasonId: activeSeasonId(),
+        raceId,
+        raceLabel: currentRaceWindowLabel(),
+        statId,
+        modeId,
+        attemptCount,
+        costM,
+        note,
+        status: "pending",
+        createdByUid: currentUser.uid,
+        createdByEmail: currentUser.email,
+        createdAtLabel: new Date().toISOString()
+      };
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        engineRequests: [...requests, request],
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    showMessage($("teamEngineRequestMessage"), "Solicitud de motor enviada. Admin aplicara los intentos.", "success");
+    await loadCarData();
+    render();
+  } catch (error) {
+    showMessage($("teamEngineRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelTeamEngineRequest(event) {
+  const requestId = event.currentTarget.dataset.cancelTeamEngineRequest || "";
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("teamEngineRequestMessage"), "");
+  try {
+    if (!isDevelopmentWindowOpen()) {
+      throw new Error("El plazo de mejoras esta cerrado.");
+    }
+
+    const teamId = currentProfile?.teamId;
+    const team = cache.teamMap.get(teamId);
+    if (!teamId) throw new Error("Perfil sin equipo.");
+    if (!team?.isMotorist) throw new Error("Solo los equipos motoristas pueden cancelar solicitudes de motor.");
+    if (!requestId) throw new Error("Solicitud no encontrada.");
+
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.engineRequests) ? data.engineRequests : [];
+      const index = requests.findIndex((request) => (
+        request.id === requestId
+        && request.seasonId === activeSeasonId()
+        && request.status === "pending"
+      ));
+
+      if (index < 0) throw new Error("Solicitud de motor no encontrada o ya resuelta.");
+
+      const nextRequests = requests.map((request, requestIndex) => (
+        requestIndex === index
+          ? {
+              ...request,
+              status: "cancelled",
+              cancelReason: "Cancelada por el equipo",
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        engineRequests: nextRequests,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    showMessage($("teamEngineRequestMessage"), "Solicitud de motor cancelada.", "success");
+    await loadCarData();
+    render();
+  } catch (error) {
+    showMessage($("teamEngineRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function applyEngineRequest(event) {
+  const { teamId, requestId } = parseCarRequestToken(event.currentTarget.dataset.applyEngineRequest);
+  const request = engineRequestById(teamId, requestId);
+  const stop = setLoading(event.currentTarget, "Aplicando...");
+  showMessage($("adminEngineRequestMessage"), "");
+  try {
+    if (!request || request.status !== "pending") {
+      throw new Error("Solicitud de motor no encontrada o ya resuelta.");
+    }
+
+    const savedEntry = await applyEngineRuns({
+      teamId,
+      statId: request.statId,
+      modeId: request.modeId,
+      attemptCount: Number(request.attemptCount),
+      shouldCharge: true,
+      requestId,
+      raceId: request.raceId || "",
+      raceLabelText: request.raceLabel || ""
+    });
+
+    await loadPublicData();
+    if (isAdmin()) await loadAdminMovements();
+    await loadCarData();
+    await loadEngineData();
+    render();
+
+    showMessage(
+      $("adminEngineRequestMessage"),
+      `${teamName(teamId)} ${engineStatById(request.statId)?.name || request.statId}: ${renderEngineAttemptSummary(savedEntry.attempts)}. Coste ${moneyM(savedEntry.costM)}.`,
+      "success"
+    );
+  } catch (error) {
+    showMessage($("adminEngineRequestMessage"), translateError(error), "error");
+  } finally {
+    stop();
+  }
+}
+
+async function cancelEngineRequest(event) {
+  const { teamId, requestId } = parseCarRequestToken(event.currentTarget.dataset.cancelEngineRequest);
+  const ok = window.confirm(`Cancelar solicitud de motor de ${teamName(teamId)}?`);
+  if (!ok) return;
+
+  const stop = setLoading(event.currentTarget, "Cancelando...");
+  showMessage($("adminEngineRequestMessage"), "");
+  try {
+    await db.runTransaction(async (tx) => {
+      const selectionRef = db.collection("lfm_carSelections").doc(teamId);
+      const selectionSnap = await tx.get(selectionRef);
+      const data = selectionSnap.exists ? selectionSnap.data() : {};
+      const requests = Array.isArray(data.engineRequests) ? data.engineRequests : [];
+      const index = requests.findIndex((request) => request.id === requestId && request.status === "pending");
+      if (index < 0) throw new Error("Solicitud de motor no encontrada o ya resuelta.");
+
+      const nextRequests = requests.map((request, requestIndex) => (
+        requestIndex === index
+          ? {
+              ...request,
+              status: "cancelled",
+              cancelReason: "Cancelada por admin",
+              resolvedAtLabel: new Date().toISOString(),
+              resolvedByUid: currentUser.uid,
+              resolvedByEmail: currentUser.email
+            }
+          : request
+      ));
+
+      tx.set(selectionRef, {
+        teamId,
+        seasonId: activeSeasonId(),
+        engineRequests: nextRequests,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    await loadCarData();
+    render();
+    showMessage($("adminEngineRequestMessage"), "Solicitud de motor cancelada.", "success");
+  } catch (error) {
+    showMessage($("adminEngineRequestMessage"), translateError(error), "error");
   } finally {
     stop();
   }
