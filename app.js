@@ -40,6 +40,7 @@ let cache = {
   carDocs: new Map(),
   carSelections: new Map(),
   carLoadError: "",
+  carSelectionLoadError: "",
   engines: new Map(),
   engineLoadError: "",
   pendingEngineImport: null,
@@ -690,6 +691,25 @@ function carDoc(teamId) {
 
 function carSelection(teamId) {
   return cache.carSelections.get(teamId) || { teamId, seasonId: activeSeasonId(), selectedDesignIds: {} };
+}
+
+function renderCarSelectionLoadWarning() {
+  return cache.carSelectionLoadError
+    ? `<p class="warning-text">No pude recargar tus solicitudes: ${html(cache.carSelectionLoadError)}</p>`
+    : "";
+}
+
+function cacheSelectionRequest(teamId, field, request) {
+  if (!teamId || !field || !request) return;
+  const selection = carSelection(teamId);
+  const list = Array.isArray(selection[field]) ? selection[field] : [];
+  if (list.some((item) => item.id === request.id)) return;
+  cache.carSelections.set(teamId, {
+    ...selection,
+    teamId,
+    seasonId: activeSeasonId(),
+    [field]: [...list, request]
+  });
 }
 
 function carRequests(teamId) {
@@ -2874,34 +2894,56 @@ async function loadCarData() {
   cache.carDocs = new Map();
   cache.carSelections = new Map();
   cache.carLoadError = "";
+  cache.carSelectionLoadError = "";
 
   if (window.LFM_MISSING_CONFIG || !currentUser) return;
 
-  try {
-    if (isAdmin()) {
-      const [carsSnap, selectionsSnap] = await Promise.all([
-        db.collection("lfm_teamCars").get(),
-        db.collection("lfm_carSelections").get()
-      ]);
+  if (isAdmin()) {
+    const [carsResult, selectionsResult] = await Promise.allSettled([
+      db.collection("lfm_teamCars").get(),
+      db.collection("lfm_carSelections").get()
+    ]);
+
+    if (carsResult.status === "fulfilled") {
+      const carsSnap = carsResult.value;
       cache.carDocs = new Map(carsSnap.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() }]));
-      cache.carSelections = new Map(selectionsSnap.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() }]));
-      return;
+    } else {
+      cache.carLoadError = translateError(carsResult.reason);
     }
 
-    if (currentProfile?.teamId) {
-      const [carSnap, selectionSnap] = await Promise.all([
-        db.collection("lfm_teamCars").doc(currentProfile.teamId).get(),
-        db.collection("lfm_carSelections").doc(currentProfile.teamId).get()
-      ]);
+    if (selectionsResult.status === "fulfilled") {
+      const selectionsSnap = selectionsResult.value;
+      cache.carSelections = new Map(selectionsSnap.docs.map((doc) => [doc.id, { id: doc.id, ...doc.data() }]));
+    } else {
+      cache.carSelectionLoadError = translateError(selectionsResult.reason);
+    }
+    return;
+  }
+
+  if (currentProfile?.teamId) {
+    const teamId = currentProfile.teamId;
+    const [carResult, selectionResult] = await Promise.allSettled([
+      db.collection("lfm_teamCars").doc(teamId).get(),
+      db.collection("lfm_carSelections").doc(teamId).get()
+    ]);
+
+    if (carResult.status === "fulfilled") {
+      const carSnap = carResult.value;
       if (carSnap.exists) {
         cache.carDocs.set(currentProfile.teamId, { id: carSnap.id, ...carSnap.data() });
       }
+    } else {
+      cache.carLoadError = translateError(carResult.reason);
+    }
+
+    if (selectionResult.status === "fulfilled") {
+      const selectionSnap = selectionResult.value;
       if (selectionSnap.exists) {
         cache.carSelections.set(currentProfile.teamId, { id: selectionSnap.id, ...selectionSnap.data() });
       }
+    } else {
+      cache.carSelectionLoadError = translateError(selectionResult.reason);
     }
-  } catch (error) {
-    cache.carLoadError = translateError(error);
   }
 }
 
@@ -5278,7 +5320,10 @@ function renderHeadquartersTable(teams) {
 
 function renderTeamWeights(teamId) {
   if (cache.carLoadError) {
-    return `<div class="empty">${html(cache.carLoadError)} Revisa las reglas privadas de coche.</div>`;
+    return `
+      ${renderTeamWeightRequestPanel(teamId)}
+      <div class="empty">${html(cache.carLoadError)} Revisa las reglas privadas de coche.</div>
+    `;
   }
   if (!weightPieces().length) {
     return `<div class="empty">Todavia no hay tabla de pesos cargada.</div>`;
@@ -5366,6 +5411,7 @@ function renderTeamWeightRequestPanel(teamId) {
       ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
       ${pending.length >= 3 ? `<p class="warning-text">Ya tienes 3 solicitudes de peso pendientes.</p>` : ""}
       ${developmentOpen && !firstAvailablePiece ? `<p class="warning-text">No quedan piezas disponibles para solicitar.</p>` : ""}
+      ${renderCarSelectionLoadWarning()}
       ${renderWeightRequestHistory(teamId)}
     </section>
   `;
@@ -5762,6 +5808,7 @@ function renderTeamEngineRequestPanel(team) {
       </form>
       ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
       ${developmentOpen && availableM < unitCostM ? `<p class="warning-text">No queda margen de motor para este GP.</p>` : ""}
+      ${renderCarSelectionLoadWarning()}
       ${renderEngineRequestHistory(team.id)}
     </section>
   `;
@@ -6098,6 +6145,7 @@ function renderTeamCarRequestPanel(teamId) {
       ${!developmentOpen ? `<p class="warning-text">El plazo de mejoras esta cerrado.</p>` : ""}
       ${pending.length >= 4 ? `<p class="warning-text">Ya tienes 4 solicitudes pendientes.</p>` : ""}
       ${developmentOpen && !firstAvailablePiece ? `<p class="warning-text">Todas las piezas tienen una solicitud pendiente.</p>` : ""}
+      ${renderCarSelectionLoadWarning()}
       ${renderCarRequestHistory(teamId)}
     </section>
   `;
@@ -6105,7 +6153,10 @@ function renderTeamCarRequestPanel(teamId) {
 
 function renderTeamCar(teamId) {
   if (cache.carLoadError) {
-    return `<div class="empty">${html(cache.carLoadError)} Revisa las reglas privadas de coche.</div>`;
+    return `
+      ${renderTeamCarRequestPanel(teamId)}
+      <div class="empty">${html(cache.carLoadError)} Revisa las reglas privadas de coche.</div>
+    `;
   }
 
   const car = carDoc(teamId);
@@ -10450,6 +10501,7 @@ async function saveTeamEngineRequest(event) {
     }
     if (costM <= 0) throw new Error("Coste de intentos no configurado.");
 
+    let createdRequest = null;
     await db.runTransaction(async (tx) => {
       const selectionRef = db.collection("lfm_carSelections").doc(teamId);
       const selectionSnap = await tx.get(selectionRef);
@@ -10483,6 +10535,7 @@ async function saveTeamEngineRequest(event) {
         createdByEmail: currentUser.email,
         createdAtLabel: new Date().toISOString()
       };
+      createdRequest = request;
 
       tx.set(selectionRef, {
         teamId,
@@ -10492,9 +10545,10 @@ async function saveTeamEngineRequest(event) {
       }, { merge: true });
     });
 
-    showMessage($("teamEngineRequestMessage"), "Solicitud de motor enviada. Admin aplicara los intentos.", "success");
     await loadCarData();
+    cacheSelectionRequest(teamId, "engineRequests", createdRequest);
     render();
+    showMessage($("teamEngineRequestMessage"), "Solicitud de motor enviada. Admin aplicara los intentos.", "success");
   } catch (error) {
     showMessage($("teamEngineRequestMessage"), translateError(error), "error");
   } finally {
@@ -11598,6 +11652,7 @@ async function saveTeamWeightRequest(event) {
     if (![1, 2, 3].includes(runs)) throw new Error("Las tiradas deben ser 1, 2 o 3.");
     if (costM <= 0) throw new Error("Coste de tiradas no configurado.");
 
+    let createdRequest = null;
     await db.runTransaction(async (tx) => {
       const selectionRef = db.collection("lfm_carSelections").doc(teamId);
       const carRef = db.collection("lfm_teamCars").doc(teamId);
@@ -11631,6 +11686,7 @@ async function saveTeamWeightRequest(event) {
         createdByEmail: currentUser.email,
         createdAtLabel: new Date().toISOString()
       };
+      createdRequest = request;
 
       tx.set(selectionRef, {
         teamId,
@@ -11640,9 +11696,10 @@ async function saveTeamWeightRequest(event) {
       }, { merge: true });
     });
 
-    showMessage($("teamWeightRequestMessage"), "Solicitud de peso enviada. Admin aplicara las tiradas.", "success");
     await loadCarData();
+    cacheSelectionRequest(teamId, "weightRequests", createdRequest);
     render();
+    showMessage($("teamWeightRequestMessage"), "Solicitud de peso enviada. Admin aplicara las tiradas.", "success");
   } catch (error) {
     showMessage($("teamWeightRequestMessage"), translateError(error), "error");
   } finally {
@@ -11733,6 +11790,7 @@ async function saveTeamCarRequest(event) {
     }
     if (!note) throw new Error("Completa una nota o nombre para la solicitud.");
 
+    let createdRequest = null;
     await db.runTransaction(async (tx) => {
       const selectionRef = db.collection("lfm_carSelections").doc(teamId);
       const selectionSnap = await tx.get(selectionRef);
@@ -11759,6 +11817,7 @@ async function saveTeamCarRequest(event) {
         createdByEmail: currentUser.email,
         createdAtLabel: new Date().toISOString()
       };
+      createdRequest = request;
 
       tx.set(selectionRef, {
         teamId,
@@ -11768,9 +11827,10 @@ async function saveTeamCarRequest(event) {
       }, { merge: true });
     });
 
-    showMessage($("teamCarRequestMessage"), "Solicitud enviada. El admin cargara el resultado.", "success");
     await loadCarData();
+    cacheSelectionRequest(teamId, "carRequests", createdRequest);
     render();
+    showMessage($("teamCarRequestMessage"), "Solicitud enviada. El admin cargara el resultado.", "success");
   } catch (error) {
     showMessage($("teamCarRequestMessage"), translateError(error), "error");
   } finally {
