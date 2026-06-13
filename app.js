@@ -6491,7 +6491,7 @@ function renderCarSnapshots(teamId) {
         const weights = snapshot.weights || null;
         const weightPieces = weights?.pieces ? Object.values(weights.pieces) : [];
         const engine = snapshot.engine || null;
-        const engineStats = engine?.stats
+        const snapshotEngineStats = engine?.stats
           ? engineStats().filter((stat) => Object.prototype.hasOwnProperty.call(engine.stats, stat.id))
           : [];
         const statTotals = snapshotStatTotals(pieces);
@@ -6534,9 +6534,9 @@ function renderCarSnapshots(teamId) {
                 ${engine ? `
                   <p class="snapshot-main-value">${html(engine.engineName || "-")}</p>
                   <span class="muted">${html(teamName(engine.motoristId))}</span>
-                  ${engineStats.length ? `
+                  ${snapshotEngineStats.length ? `
                     <div class="snapshot-mini-list">
-                      ${engineStats.map((stat) => `<span>${html(stat.name)}: ${html(engine.stats[stat.id])}</span>`).join("")}
+                      ${snapshotEngineStats.map((stat) => `<span>${html(stat.name)}: ${html(engine.stats[stat.id])}</span>`).join("")}
                     </div>
                   ` : ""}
                 ` : `<div class="empty">Sin motor guardado.</div>`}
