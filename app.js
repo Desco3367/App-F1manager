@@ -971,18 +971,29 @@ function carStatsFromDesignIds(teamId, designIds = {}) {
   }, {});
 }
 
+function wholeCarStatOrder() {
+  return [
+    "Airflow front",
+    "Airflow middle",
+    "Airflow sensitivity",
+    "DRS Delta",
+    "Drag reduction",
+    "Engine cooling",
+    "Low speed downforce",
+    "Medium speed downforce",
+    "High speed downforce",
+    "Tyre preservation",
+    "Duracion minima"
+  ];
+}
+
 function orderedCarStatNames(statsList = []) {
   const present = new Set();
   statsList.forEach((stats) => {
     Object.keys(stats || {}).forEach((stat) => present.add(stat));
   });
 
-  const ordered = [];
-  carPieces().forEach((piece) => {
-    (piece.stats || []).forEach((stat) => {
-      if (present.has(stat) && !ordered.includes(stat)) ordered.push(stat);
-    });
-  });
+  const ordered = wholeCarStatOrder().filter((stat) => present.has(stat));
 
   return [
     ...ordered.filter((stat) => stat !== "Duracion minima"),
