@@ -23,6 +23,7 @@ let currentPublicTab = "inicio";
 let currentAdminTab = "base";
 let currentAdminCarTab = "resumen";
 let currentAdminCarRequestTeamFilter = "";
+let currentAdminWholeCarStatsMode = "active";
 let currentAdminWeightRequestTeamFilter = "";
 let currentAdminEngineRequestTeamFilter = "";
 let currentTeamTab = "resumen";
@@ -968,6 +969,56 @@ function carStatsFromDesignIds(teamId, designIds = {}) {
     const design = designId ? designById(teamId, piece.id, designId) : null;
     return addDesignStats(total, design);
   }, {});
+}
+
+function orderedCarStatNames(statsList = []) {
+  const present = new Set();
+  statsList.forEach((stats) => {
+    Object.keys(stats || {}).forEach((stat) => present.add(stat));
+  });
+
+  const ordered = [];
+  carPieces().forEach((piece) => {
+    (piece.stats || []).forEach((stat) => {
+      if (present.has(stat) && !ordered.includes(stat)) ordered.push(stat);
+    });
+  });
+
+  return [
+    ...ordered.filter((stat) => stat !== "Duracion minima"),
+    ...Array.from(present)
+      .filter((stat) => !ordered.includes(stat) && stat !== "Duracion minima")
+      .sort((a, b) => a.localeCompare(b)),
+    ...(present.has("Duracion minima") ? ["Duracion minima"] : [])
+  ];
+}
+
+function wholeCarStatsModeOptions() {
+  return [
+    { id: "active", label: "Equipado oficial" },
+    { id: "selected", label: "Seleccionado GP" },
+    { id: "latest", label: "Ultima version disenada" }
+  ];
+}
+
+function normalizeWholeCarStatsMode(mode) {
+  return wholeCarStatsModeOptions().some((option) => option.id === mode) ? mode : "active";
+}
+
+function wholeCarStatsModeLabel(mode) {
+  return wholeCarStatsModeOptions().find((option) => option.id === mode)?.label || "Equipado oficial";
+}
+
+function wholeCarStatsForMode(review, mode) {
+  if (mode === "selected") return review.selectedStats || {};
+  if (mode === "latest") return review.latestStats || {};
+  return review.activeStats || {};
+}
+
+function wholeCarMissingPiecesForMode(review, mode) {
+  if (mode === "selected") return review.missingSelected || [];
+  if (mode === "latest") return review.missingDesigns || [];
+  return review.missingActive || [];
 }
 
 function pieceStatDiffs(piece, activeDesign, selectedDesign) {
@@ -4547,6 +4598,11 @@ function renderAdmin() {
     control.addEventListener("input", updateRaceAwardPreview);
   });
   wireAdminCarTabs();
+  $("adminWholeCarStatsMode")?.addEventListener("change", (event) => {
+    currentAdminWholeCarStatsMode = normalizeWholeCarStatsMode(event.target.value);
+    render();
+  });
+  $("copyWholeCarStatsBtn")?.addEventListener("click", copyWholeCarStatsTable);
   $("carDesignPiece")?.addEventListener("change", () => {
     renderCarDesignUpgradeOptions();
     renderCarDesignStatFields("design");
@@ -8565,6 +8621,25 @@ function wireTeamCarPreviewControls() {
   });
 }
 
+async function copyWholeCarStatsTable() {
+  const table = $("adminWholeCarStatsTable");
+  const message = $("wholeCarStatsMessage");
+  if (!table) return;
+
+  const text = Array.from(table.rows)
+    .map((row) => Array.from(row.cells)
+      .map((cell) => cell.textContent.replace(/\s+/g, " ").trim())
+      .join("\t"))
+    .join("\n");
+
+  try {
+    await navigator.clipboard.writeText(text);
+    showMessage(message, "Tabla copiada al portapapeles.", "success");
+  } catch (error) {
+    showMessage(message, "No pude copiar automaticamente. Selecciona la tabla y copiala manualmente.", "error");
+  }
+}
+
 function adminCarTabs() {
   return [
     { id: "resumen", label: "Resumen" },
@@ -8621,6 +8696,72 @@ function pendingResearchCount(teamId) {
   ), 0);
 }
 
+function renderAdminWholeCarStats(teams) {
+  currentAdminWholeCarStatsMode = normalizeWholeCarStatsMode(currentAdminWholeCarStatsMode);
+  const mode = currentAdminWholeCarStatsMode;
+  const rows = teams.map((team) => {
+    const review = carSelectionReview(team.id);
+    const stats = wholeCarStatsForMode(review, mode);
+    const missing = wholeCarMissingPiecesForMode(review, mode);
+    return { team, review, stats, missing };
+  });
+  const statNames = orderedCarStatNames(rows.map((row) => row.stats));
+
+  return `
+    <article class="subcard whole-car-stats-card">
+      <div class="card-header">
+        <div>
+          <h4>Stats coche completo</h4>
+          <p class="muted">Totales por equipo para cargar o revisar los coches completos en el juego real.</p>
+        </div>
+        <span class="pill">${html(wholeCarStatsModeLabel(mode))}</span>
+      </div>
+      <div class="whole-car-stats-toolbar">
+        <label>Ver
+          <select id="adminWholeCarStatsMode">
+            ${wholeCarStatsModeOptions().map((option) => `
+              <option value="${html(option.id)}" ${option.id === mode ? "selected" : ""}>${html(option.label)}</option>
+            `).join("")}
+          </select>
+        </label>
+        <button id="copyWholeCarStatsBtn" class="ghost" type="button" ${statNames.length ? "" : "disabled"}>Copiar tabla</button>
+      </div>
+      ${statNames.length ? `
+        <div class="table-wrap whole-car-stats-table">
+          <table id="adminWholeCarStatsTable">
+            <thead>
+              <tr>
+                <th>Equipo</th>
+                <th>Piezas</th>
+                ${statNames.map((stat) => `<th>${html(stat)}</th>`).join("")}
+                <th>Notas</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map(({ team, review, stats, missing }) => {
+                const completePieces = carPieces().length - missing.length;
+                const notes = [
+                  missing.length ? `Faltan: ${missing.map((piece) => piece.name).join(", ")}` : "",
+                  mode === "selected" && review.changedPieces.length ? `Cambios: ${review.changedPieces.map((piece) => piece.name).join(", ")}` : ""
+                ].filter(Boolean);
+                return `
+                  <tr class="${missing.length ? "warn-row" : ""}">
+                    <td><strong>${html(team.name)}</strong></td>
+                    <td>${html(completePieces)}/${html(carPieces().length)}</td>
+                    ${statNames.map((stat) => `<td class="numeric-cell">${html(formatStatValue(stats[stat]))}</td>`).join("")}
+                    <td>${notes.length ? html(notes.join(" | ")) : "-"}</td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty">Todavia no hay stats de coches cargadas.</div>`}
+      <p id="wholeCarStatsMessage" class="message"></p>
+    </article>
+  `;
+}
+
 function renderAdminCarSummary(teams) {
   if (cache.carLoadError) {
     return `<div class="empty">${html(cache.carLoadError)} Publica las reglas privadas de coche para usar este modulo.</div>`;
@@ -8654,6 +8795,8 @@ function renderAdminCarSummary(teams) {
           </div>
         </article>
       </div>
+
+      ${renderAdminWholeCarStats(teams)}
 
       <div class="car-admin-review-list">
         ${teams.map((team) => {

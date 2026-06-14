@@ -1212,6 +1212,36 @@ tr:last-child td {
   gap: 12px;
 }
 
+.whole-car-stats-card {
+  align-items: stretch;
+}
+
+.whole-car-stats-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 340px) auto;
+  gap: 10px;
+  align-items: end;
+  justify-content: start;
+}
+
+.whole-car-stats-table table {
+  min-width: 1180px;
+}
+
+.whole-car-stats-table th,
+.whole-car-stats-table td {
+  white-space: nowrap;
+}
+
+.numeric-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.warn-row td {
+  background: rgba(215, 169, 53, 0.05);
+}
+
 .subcard {
   display: grid;
   gap: 12px;
