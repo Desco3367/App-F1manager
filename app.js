@@ -3040,10 +3040,35 @@ async function loadSessionData() {
   render();
 }
 
+function carDesignFormHasUnsavedData(mode) {
+  const prefix = carDesignFormPrefix(mode);
+  const form = $(`${prefix}Form`);
+  if (!form) return false;
+
+  if (($(`${prefix}RequestId`)?.value || "").trim()) return true;
+  if (($(`${prefix}Name`)?.value || "").trim()) return true;
+  if (Number($(`${prefix}Steps`)?.value || 0) !== 0) return true;
+  if ($(`${prefix}Charge`) && !$(`${prefix}Charge`).checked) return true;
+
+  return Array.from(form.querySelectorAll(".car-stat-input")).some((input) => (
+    !input.readOnly && String(input.value || "").trim() !== ""
+  ));
+}
+
+function adminCarDesignHasUnsavedData() {
+  if (currentView !== "admin" || currentAdminTab !== "coche" || currentAdminCarTab !== "disenar") {
+    return false;
+  }
+  return carDesignFormHasUnsavedData("design") || carDesignFormHasUnsavedData("research");
+}
+
 function autoRefreshBlockedByEditing() {
   const active = document.activeElement;
-  if (!active) return false;
-  return ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName);
+  if (active && (["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName) || active.isContentEditable)) {
+    return true;
+  }
+  if (document.querySelector("form:focus-within")) return true;
+  return adminCarDesignHasUnsavedData();
 }
 
 async function autoRefreshData() {
@@ -9022,9 +9047,23 @@ function renderCarDesignStatFields(mode = "") {
   if (!container) return;
   const piece = pieceById($(`${prefix}Piece`)?.value);
   const steps = Math.max(0, Math.min(10, Number($(`${prefix}Steps`)?.value || 0)));
+  const requestId = ($(`${prefix}RequestId`)?.value || "").trim();
   if (!piece) {
     container.innerHTML = "";
+    container.dataset.pieceId = "";
+    container.dataset.requestId = "";
     return;
+  }
+
+  const previousValues = new Map();
+  const shouldPreserveValues = container.dataset.pieceId === piece.id
+    && (container.dataset.requestId || "") === requestId;
+  if (shouldPreserveValues) {
+    container.querySelectorAll(".car-stat-input").forEach((input) => {
+      if (!input.readOnly && String(input.value || "").trim() !== "") {
+        previousValues.set(input.dataset.stat, input.value);
+      }
+    });
   }
 
   container.innerHTML = `
@@ -9032,7 +9071,9 @@ function renderCarDesignStatFields(mode = "") {
     ${mode === "research" ? `<p class="muted">Investigacion: se guarda como Equilibrado, no se puede equipar y solo acumula valores positivos para la proxima temporada.</p>` : ""}
     ${piece.stats.filter((stat) => !(mode === "research" && stat === "Duracion minima")).map((stat) => {
       const isDuration = stat === "Duracion minima";
-      const value = isDuration ? piece.durationMinBySteps[steps] || piece.durationMinBySteps[0] || 0 : "";
+      const value = isDuration
+        ? piece.durationMinBySteps[steps] || piece.durationMinBySteps[0] || 0
+        : previousValues.get(stat) || "";
       return `
         <label>${html(stat)}
           <input class="car-stat-input" data-stat="${html(stat)}" type="number" step="0.01" value="${html(value)}" ${isDuration ? "readonly" : "required"} />
@@ -9040,6 +9081,8 @@ function renderCarDesignStatFields(mode = "") {
       `;
     }).join("")}
   `;
+  container.dataset.pieceId = piece.id;
+  container.dataset.requestId = requestId;
 }
 
 function renderEngineRunPreview() {
