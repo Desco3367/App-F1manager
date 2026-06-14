@@ -1212,11 +1212,11 @@ tr:last-child td {
   gap: 12px;
 }
 
-.whole-car-stats-card {
+.piece-car-stats-card {
   align-items: stretch;
 }
 
-.whole-car-stats-toolbar {
+.piece-car-stats-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 340px) auto;
   gap: 10px;
@@ -1224,12 +1224,27 @@ tr:last-child td {
   justify-content: start;
 }
 
-.whole-car-stats-table table {
-  min-width: 1180px;
+.piece-car-stats-stack {
+  display: grid;
+  gap: 14px;
 }
 
-.whole-car-stats-table th,
-.whole-car-stats-table td {
+.piece-car-stats-section {
+  display: grid;
+  gap: 8px;
+}
+
+.piece-car-stats-section h5 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.piece-car-stats-table table {
+  min-width: 980px;
+}
+
+.piece-car-stats-table th,
+.piece-car-stats-table td {
   white-space: nowrap;
 }
 
