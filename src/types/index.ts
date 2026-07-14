@@ -44,3 +44,14 @@ export interface EngineRequest {
   createdAt: number;
 }
 
+export interface TransferRequest {
+  id: string;
+  seasonId: string;
+  teamFrom: string;
+  teamTo: string;
+  amountM: number;
+  concept: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+}
+

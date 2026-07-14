@@ -269,3 +269,87 @@ export const resolveEngineRequest = async (teamId: string, requestId: string, ne
     return false;
   }
 };
+
+import { TransferRequest } from '../types';
+
+export const submitTransferRequest = async (teamFrom: string, teamTo: string, amountM: number, concept: string): Promise<boolean> => {
+  try {
+    const newRequest: TransferRequest = {
+      id: Math.random().toString(36).substring(2, 9),
+      seasonId: "season2026", // TODO: settings
+      teamFrom,
+      teamTo,
+      amountM,
+      concept,
+      status: 'pending',
+      createdAt: Date.now()
+    };
+    
+    // We will save all transfer requests in a general collection for all teams
+    const reqRef = doc(collection(db, 'lfm_transferRequests'), newRequest.id);
+    await setDoc(reqRef, newRequest);
+    return true;
+  } catch (error) {
+    console.error("Error submitting transfer:", error);
+    return false;
+  }
+};
+
+export const subscribeToTransferRequests = (callback: (requests: TransferRequest[]) => void) => {
+  const q = collection(db, 'lfm_transferRequests');
+  return onSnapshot(q, (snapshot) => {
+    let allRequests: TransferRequest[] = [];
+    snapshot.forEach((doc) => {
+      allRequests.push(doc.data() as TransferRequest);
+    });
+    // Sort descending (newest first)
+    allRequests.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    callback(allRequests);
+  }, (error) => {
+    console.error("Error subscribing to transfer requests:", error);
+  });
+};
+
+import { runTransaction } from 'firebase/firestore';
+
+export const resolveTransferRequest = async (requestId: string, newStatus: 'approved' | 'rejected'): Promise<boolean> => {
+  try {
+    const reqRef = doc(db, 'lfm_transferRequests', requestId);
+    
+    if (newStatus === 'rejected') {
+      await updateDoc(reqRef, { status: 'rejected' });
+      return true;
+    }
+
+    // Si es aprobada, necesitamos actualizar los saldos de forma atómica
+    await runTransaction(db, async (transaction) => {
+      const reqSnap = await transaction.get(reqRef);
+      if (!reqSnap.exists()) throw new Error("Request no existe");
+      const reqData = reqSnap.data() as TransferRequest;
+
+      if (reqData.status !== 'pending') throw new Error("La request ya no está pendiente");
+
+      const fromRef = doc(db, 'lfm_teams', reqData.teamFrom);
+      const toRef = doc(db, 'lfm_teams', reqData.teamTo);
+
+      const fromSnap = await transaction.get(fromRef);
+      const toSnap = await transaction.get(toRef);
+
+      if (!fromSnap.exists() || !toSnap.exists()) {
+        throw new Error("Uno de los equipos no existe");
+      }
+
+      const fromBudget = fromSnap.data().budgetRemainingM || 0;
+      const toBudget = toSnap.data().budgetRemainingM || 0;
+
+      transaction.update(fromRef, { budgetRemainingM: fromBudget - reqData.amountM });
+      transaction.update(toRef, { budgetRemainingM: toBudget + reqData.amountM });
+      transaction.update(reqRef, { status: 'approved' });
+    });
+    
+    return true;
+  } catch (error) {
+    console.error("Error resolving transfer:", error);
+    return false;
+  }
+};

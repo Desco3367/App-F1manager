@@ -1,26 +1,51 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { LFM_SEED } from '../../api/seed-data';
+import { getTeams, subscribeToTransferRequests, resolveTransferRequest } from '../../api/db';
+import { TransferRequest, Team } from '../../types';
 
 const TransfersAdmin = () => {
-  // Mock transfer requests
-  const [requests, setRequests] = useState([
-    { id: '1', teamFrom: 'mercedes', teamTo: 'williams', amountM: 15, concept: 'Compra de caja de cambios' },
-    { id: '2', teamFrom: 'redbull', teamTo: 'alphatauri', amountM: 20, concept: 'Apoyo financiero' },
-  ]);
+  const [requests, setRequests] = useState<TransferRequest[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleApprove = (reqId: string) => {
-    alert('Transferencia aprobada.\nSe descontó el dinero del origen y se sumó al destino de manera automática.');
-    setRequests(prev => prev.filter(r => r.id !== reqId));
+  useEffect(() => {
+    const loadData = async () => {
+      const allTeams = await getTeams();
+      setTeams(allTeams);
+      setIsLoading(false);
+    };
+    loadData();
+
+    const unsubscribe = subscribeToTransferRequests((allRequests) => {
+      setRequests(allRequests);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleApprove = async (reqId: string) => {
+    const success = await resolveTransferRequest(reqId, 'approved');
+    if (success) {
+      alert('Transferencia aprobada.\nSe descontó el dinero del origen y se sumó al destino de manera automática.');
+    } else {
+      alert('Error al aprobar la transferencia.');
+    }
   };
 
-  const handleReject = (reqId: string) => {
-    alert('Transferencia rechazada.');
-    setRequests(prev => prev.filter(r => r.id !== reqId));
+  const handleReject = async (reqId: string) => {
+    const success = await resolveTransferRequest(reqId, 'rejected');
+    if (success) {
+      alert('Transferencia rechazada.');
+    } else {
+      alert('Error al rechazar la transferencia.');
+    }
   };
 
-  const getTeamName = (id: string) => LFM_SEED.teams.find(t => t.id === id)?.name || id;
+  const getTeamName = (id: string) => teams.find(t => t.id === id)?.name || id;
+
+  const pendingRequests = requests.filter(r => r.status === 'pending');
+  const historyRequests = requests.filter(r => r.status !== 'pending');
 
   return (
     <div className="p-8 max-w-7xl mx-auto flex flex-col gap-8">
@@ -29,8 +54,10 @@ const TransfersAdmin = () => {
         <p className="text-text-secondary mt-1">Aprobación de movimientos financieros y transferencias entre equipos.</p>
       </div>
 
-      <Card title="Cola de Transferencias Pendientes">
-        {requests.length === 0 ? (
+      <Card title="Cola de Transferencias Pendientes (En vivo)">
+        {isLoading ? (
+          <p className="text-text-muted">Cargando...</p>
+        ) : pendingRequests.length === 0 ? (
           <p className="text-text-muted">No hay transferencias pendientes de aprobación.</p>
         ) : (
           <div className="overflow-x-auto">
@@ -45,7 +72,7 @@ const TransfersAdmin = () => {
                 </tr>
               </thead>
               <tbody>
-                {requests.map(req => (
+                {pendingRequests.map(req => (
                   <tr key={req.id} className="border-b border-border-color/50 hover:bg-bg-surface-elevated/50 transition-colors">
                     <td className="py-3 px-4 font-heading font-bold text-danger-text">{getTeamName(req.teamFrom)}</td>
                     <td className="py-3 px-4 font-mono text-center font-bold text-accent-red text-lg">
@@ -62,6 +89,47 @@ const TransfersAdmin = () => {
                       <Button variant="secondary" onClick={() => handleReject(req.id)} className="!px-3 !py-1 text-sm bg-danger-text/20 text-danger-text hover:bg-danger-text/30 border-none">
                         Rechazar
                       </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card title="Historial Resuelto (Últimos)">
+        {historyRequests.length === 0 ? (
+          <p className="text-text-muted">No hay historial.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse opacity-75">
+              <thead>
+                <tr className="border-b border-border-color text-text-muted text-sm uppercase tracking-wider">
+                  <th className="py-3 px-4 font-medium">Origen (Paga)</th>
+                  <th className="py-3 px-4 font-medium text-center">Monto</th>
+                  <th className="py-3 px-4 font-medium">Destino (Recibe)</th>
+                  <th className="py-3 px-4 font-medium">Concepto</th>
+                  <th className="py-3 px-4 font-medium">Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyRequests.slice(0, 10).map(req => (
+                  <tr key={req.id} className="border-b border-border-color/50">
+                    <td className="py-3 px-4">{getTeamName(req.teamFrom)}</td>
+                    <td className="py-3 px-4 font-mono text-center font-bold">
+                      ${req.amountM}M
+                    </td>
+                    <td className="py-3 px-4">{getTeamName(req.teamTo)}</td>
+                    <td className="py-3 px-4 text-sm italic">
+                      "{req.concept}"
+                    </td>
+                    <td className="py-3 px-4">
+                      {req.status === 'approved' ? (
+                        <span className="text-success-text font-bold">Aprobada</span>
+                      ) : (
+                        <span className="text-danger-text font-bold">Rechazada</span>
+                      )}
                     </td>
                   </tr>
                 ))}

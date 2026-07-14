@@ -1,45 +1,76 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { LFM_SEED } from '../../api/seed-data';
+import { getTeams, submitTransferRequest, subscribeToTransferRequests } from '../../api/db';
+import { TransferRequest, Team } from '../../types';
 import styles from './EconomyDashboard.module.css';
 
 const EconomyDashboard = () => {
   const { profile } = useAuth();
+  const [budget, setBudget] = useState(0);
+  const [otherTeams, setOtherTeams] = useState<Team[]>([]);
+  const [requests, setRequests] = useState<TransferRequest[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   
-  // En producción vendría de Firebase
   const teamId = profile?.teamId || 'ferrari';
-  const teamData = LFM_SEED.teams.find(t => t.id === teamId);
-  const otherTeams = LFM_SEED.teams.filter(t => t.id !== teamId);
   
-  const [destinationTeam, setDestinationTeam] = useState(otherTeams[0]?.id || '');
+  const [destinationTeam, setDestinationTeam] = useState('');
   const [amount, setAmount] = useState<number | ''>('');
   const [concept, setConcept] = useState('');
 
-  const budget = teamData?.budgetRemainingM || 0;
+  useEffect(() => {
+    const loadTeams = async () => {
+      const teams = await getTeams();
+      const myTeam = teams.find(t => t.id === teamId);
+      if (myTeam) {
+        setBudget(myTeam.budgetRemainingM);
+      }
+      
+      const others = teams.filter(t => t.id !== teamId);
+      setOtherTeams(others);
+      if (others.length > 0) {
+        setDestinationTeam(others[0].id);
+      }
+      setIsLoading(false);
+    };
 
-  // Mock de solicitudes pasadas
-  const requests = [
-    { id: '1', date: '2026-07-10', to: 'williams', amount: 2.5, concept: 'Pago por motores', status: 'pending' },
-    { id: '2', date: '2026-07-05', to: 'mclaren', amount: 1.0, concept: 'Acuerdo de pilotos', status: 'approved' },
-  ];
+    loadTeams();
 
-  const handleSubmit = (e: React.FormEvent) => {
+    const unsubscribe = subscribeToTransferRequests((allReqs) => {
+      // Filtrar las peticiones donde el equipo sea el origen o el destino
+      const myReqs = allReqs.filter(r => r.teamFrom === teamId || r.teamTo === teamId);
+      setRequests(myReqs);
+    });
+
+    return () => unsubscribe();
+  }, [teamId]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const numAmount = Number(amount);
     if (numAmount <= 0 || numAmount > budget) {
       alert('Monto inválido.');
       return;
     }
-    alert(`Solicitud de $${numAmount}M a ${destinationTeam} enviada. Concepto: ${concept}`);
-    setAmount('');
-    setConcept('');
+    
+    setIsLoading(true);
+    const success = await submitTransferRequest(teamId, destinationTeam, numAmount, concept);
+    if (success) {
+      alert(`Solicitud de $${numAmount}M a ${getTeamName(destinationTeam)} enviada exitosamente. Concepto: ${concept}`);
+      setAmount('');
+      setConcept('');
+    } else {
+      alert('Hubo un error al enviar la solicitud.');
+    }
+    setIsLoading(false);
   };
 
   const getTeamName = (id: string) => {
-    const t = LFM_SEED.teams.find(team => team.id === id);
-    return t ? t.name : id;
+    const t = otherTeams.find(team => team.id === id);
+    if (t) return t.name;
+    if (id === teamId) return 'Tú'; // El equipo actual
+    return id;
   };
 
   return (
@@ -98,8 +129,8 @@ const EconomyDashboard = () => {
           </div>
 
           <div className={styles.submitRow}>
-            <Button type="submit" disabled={!amount || Number(amount) <= 0 || Number(amount) > budget}>
-              Enviar solicitud
+            <Button type="submit" disabled={!amount || Number(amount) <= 0 || Number(amount) > budget || isLoading}>
+              {isLoading ? 'Enviando...' : 'Enviar solicitud'}
             </Button>
           </div>
         </form>
@@ -111,20 +142,31 @@ const EconomyDashboard = () => {
           {requests.length === 0 ? (
             <p className="text-text-muted">No tienes solicitudes recientes.</p>
           ) : (
-            requests.map(req => (
-              <div key={req.id} className={styles.historyRow}>
-                <div className={styles.historyMain}>
-                  <strong>Para {getTeamName(req.to)}</strong>
-                  <span className={styles.concept}>{req.concept}</span>
+            requests.map(req => {
+              const isOutgoing = req.teamFrom === teamId;
+              
+              return (
+                <div key={req.id} className={styles.historyRow}>
+                  <div className={styles.historyMain}>
+                    <strong>
+                      {isOutgoing 
+                        ? `A: ${getTeamName(req.teamTo)}` 
+                        : `De: ${getTeamName(req.teamFrom)}`
+                      }
+                    </strong>
+                    <span className={styles.concept}>{req.concept}</span>
+                  </div>
+                  <div className={styles.historyMeta}>
+                    <strong className={`text-lg ${isOutgoing ? 'text-danger-text' : 'text-success-text'}`}>
+                      {isOutgoing ? '-' : '+'}${req.amountM}M
+                    </strong>
+                    <span className={`${styles.statusPill} ${req.status === 'pending' ? styles.pending : styles.approved}`}>
+                      {req.status === 'pending' ? 'Pendiente' : req.status === 'approved' ? 'Aprobada' : 'Rechazada'}
+                    </span>
+                  </div>
                 </div>
-                <div className={styles.historyMeta}>
-                  <strong className="text-lg">${req.amount}M</strong>
-                  <span className={`${styles.statusPill} ${req.status === 'pending' ? styles.pending : styles.approved}`}>
-                    {req.status === 'pending' ? 'Pendiente' : 'Aprobada'}
-                  </span>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
