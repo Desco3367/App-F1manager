@@ -1,0 +1,86 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 2rem;
+}
+
+.columnCard {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+}
+
+.upgradesList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summaryFooter {
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-highlight);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2rem;
+  box-shadow: var(--shadow-glow);
+}
+
+.summaryStats {
+  display: flex;
+  gap: 3rem;
+}
+
+.statBox {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.statLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.statValue {
+  font-size: 1.5rem;
+  font-weight: 800;
+  font-family: var(--font-heading);
+  color: var(--text-primary);
+}
+
+.accentText {
+  color: var(--accent-red);
+}
+
+.dangerText {
+  color: var(--danger-text);
+}
+
+.actionsBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.errorText {
+  color: var(--danger-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.saveBtn {
+  min-width: 200px;
+  font-size: 1.125rem;
+  padding: 0.75rem 1.5rem;
+}
