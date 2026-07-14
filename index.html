@@ -1,73 +1,13 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Liga F1 Manager</title>
-  <link rel="stylesheet" href="styles.css?v=2026-06-14-5" />
-
-  <!-- Firebase por CDN: no usa Node ni npm -->
-  <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-  <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-
-  <script defer src="firebase-config.js"></script>
-  <script defer src="seed-data.js?v=2026-06-14-5"></script>
-  <script defer src="app.js?v=2026-06-14-5"></script>
-</head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark">F1</span>
-      <div>
-        <h1>Liga F1 Manager</h1>
-        <p>Temporadas, equipos y economia centralizada</p>
-      </div>
-    </div>
-    <div class="top-actions">
-      <span id="authBadge" class="badge">Publico</span>
-      <button id="logoutBtn" class="ghost hidden">Cerrar sesion</button>
-    </div>
-  </header>
-
-  <main class="layout">
-    <aside class="sidebar">
-      <button class="nav-btn active" data-view="public">Liga publica</button>
-      <button class="nav-btn" data-view="login">Login</button>
-      <button id="teamNavBtn" class="nav-btn hidden" data-view="team">Mi equipo</button>
-      <button id="adminNavBtn" class="nav-btn hidden" data-view="admin">Admin</button>
-    </aside>
-
-    <section class="content">
-      <section id="setupWarning" class="notice warning hidden">
-        <strong>Falta configurar Firebase.</strong>
-        Edita <code>firebase-config.js</code> con los datos del proyecto Firebase antes de usar login o guardar datos.
-      </section>
-
-      <section id="publicView" class="view"></section>
-
-      <section id="loginView" class="view hidden">
-        <div class="card narrow">
-          <h2>Ingresar</h2>
-          <p class="muted">Usa el email y contrasena creados manualmente en Firebase Authentication.</p>
-          <form id="loginForm" class="form">
-            <label>
-              Email
-              <input id="emailInput" type="email" placeholder="ferrari@ligaf1.local" required />
-            </label>
-            <label>
-              Contrasena
-              <input id="passwordInput" type="password" required />
-            </label>
-            <button type="submit">Entrar</button>
-          </form>
-          <p id="authMessage" class="message"></p>
-        </div>
-      </section>
-
-      <section id="teamView" class="view hidden"></section>
-      <section id="adminView" class="view hidden"></section>
-    </section>
-  </main>
-</body>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + React + TS</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

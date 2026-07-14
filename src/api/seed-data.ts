@@ -1,4 +1,4 @@
-window.LFM_SEED = {
+export const LFM_SEED = {
   season: {
     id: "t7",
     number: 7,

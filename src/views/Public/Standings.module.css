@@ -1,0 +1,98 @@
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.standingsCard {
+  padding: 0;
+}
+
+.tableWrapper {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.table th {
+  background: rgba(255, 255, 255, 0.02);
+  padding: 1rem 1.5rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-highlight);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.table td {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: middle;
+}
+
+.row:hover td {
+  background: var(--bg-surface-elevated);
+}
+
+.row:last-child td {
+  border-bottom: none;
+}
+
+.colPos { width: 80px; text-align: center; }
+.colTeam { min-width: 200px; }
+.colPts { width: 100px; text-align: right; }
+.colNotes { color: var(--text-muted); font-size: 0.875rem; }
+
+.positionBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-elevated);
+  font-weight: 700;
+  font-family: var(--font-heading);
+}
+
+.positionBadge.top3 {
+  background: var(--accent-red);
+  color: white;
+}
+
+.teamInfo {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.teamColor {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.teamColor[data-team="ferrari"] { background: #e10600; }
+.teamColor[data-team="mclaren"] { background: #ff8700; }
+.teamColor[data-team="redbull"] { background: #0600ef; }
+.teamColor[data-team="mercedes"] { background: #00d2be; }
+
+.teamName {
+  font-weight: 600;
+  font-size: 1.125rem;
+}
+
+.points {
+  font-weight: 700;
+  font-size: 1.25rem;
+  font-family: var(--font-heading);
+}
