@@ -1,40 +1,46 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { LFM_SEED } from '../../api/seed-data';
 import { UpgradeRow } from './UpgradeRow';
+import { submitCarRequest, getTeams, updateTeamBudget } from '../../api/db';
 import styles from './CarDashboard.module.css';
 
 const CarDashboard = () => {
   const { profile } = useAuth();
+  const [budget, setBudget] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
   
   // Estado local para los puntos que el usuario quiere comprar
   const [designUpgrades, setDesignUpgrades] = useState<Record<string, number>>({
     aero: 0,
     chassis: 0,
-    fiabilidad: 0,
+    reliability: 0,
   });
   
   const [researchUpgrades, setResearchUpgrades] = useState<Record<string, number>>({
     aero: 0,
     chassis: 0,
-    fiabilidad: 0,
+    reliability: 0,
   });
 
-  // Mock de datos del equipo y presupuesto (en prod vendría de Firebase)
-  const teamId = profile?.teamId || 'ferrari';
-  const teamData = LFM_SEED.teams.find(t => t.id === teamId);
-  const budget = teamData?.budgetRemainingM || 0;
-  
-  const maxDevelopmentPoints = 40; // LFM_SEED.developmentLimitM
+  const teamId = profile?.teamId || 'ferrari'; // Fallback for dev
 
-  // Costos base
-  const getCost = (isResearch: boolean) => {
-    // Valores de ejemplo. En app.js se calculaban dinámicamente o leían de config.
-    if (isResearch) return 3; // Investigación cuesta 3M por punto
-    return 4; // Diseño cuesta 4M por punto
-  };
+  useEffect(() => {
+    const loadTeamData = async () => {
+      const teams = await getTeams();
+      const myTeam = teams.find(t => t.id === teamId);
+      if (myTeam) {
+        setBudget(myTeam.budgetRemainingM);
+      }
+      setIsLoading(false);
+    };
+    loadTeamData();
+  }, [teamId]);
+  
+  const maxDevelopmentPoints = 40;
+
+  const getCost = (isResearch: boolean) => isResearch ? 3 : 4;
 
   const handleIncrement = (type: 'design' | 'research', pieceId: string) => {
     if (type === 'design') {
@@ -52,7 +58,6 @@ const CarDashboard = () => {
     }
   };
 
-  // Cálculos totales
   const totalDesignPoints = Object.values(designUpgrades).reduce((a, b) => a + b, 0);
   const totalResearchPoints = Object.values(researchUpgrades).reduce((a, b) => a + b, 0);
   const totalPoints = totalDesignPoints + totalResearchPoints;
@@ -65,14 +70,43 @@ const CarDashboard = () => {
   const isOverPoints = totalPoints > maxDevelopmentPoints;
   const canSave = totalPoints > 0 && !isOverBudget && !isOverPoints;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSave) return;
-    alert(`Guardado. Costo total: $${totalCost}M.`);
-    // Reiniciar
-    setDesignUpgrades({ aero: 0, chassis: 0, fiabilidad: 0 });
-    setResearchUpgrades({ aero: 0, chassis: 0, fiabilidad: 0 });
+
+    setIsLoading(true);
+
+    const activeSeason = "season2026"; // TODO: read from settings
+    
+    // Submit Design requests
+    for (const [pieceId, qty] of Object.entries(designUpgrades)) {
+      if (qty > 0) {
+        await submitCarRequest(teamId, activeSeason, 'design', pieceId, `+${qty} puntos`, 'Enviado desde V2');
+      }
+    }
+
+    // Submit Research requests
+    for (const [pieceId, qty] of Object.entries(researchUpgrades)) {
+      if (qty > 0) {
+        await submitCarRequest(teamId, activeSeason, 'research', pieceId, `+${qty} puntos`, 'Enviado desde V2');
+      }
+    }
+
+    // Descontar presupuesto
+    const newBudget = budget - totalCost;
+    await updateTeamBudget(teamId, newBudget);
+    setBudget(newBudget);
+
+    alert(`Solicitudes enviadas exitosamente al administrador. Costo total: $${totalCost}M.`);
+    
+    setDesignUpgrades({ aero: 0, chassis: 0, reliability: 0 });
+    setResearchUpgrades({ aero: 0, chassis: 0, reliability: 0 });
+    setIsLoading(false);
   };
+
+  if (isLoading && budget === 0) {
+    return <div className="p-8 text-center">Cargando datos del equipo...</div>;
+  }
 
   return (
     <div className={styles.container}>
@@ -99,10 +133,10 @@ const CarDashboard = () => {
             />
             <UpgradeRow 
               label="Fiabilidad" 
-              value={designUpgrades.fiabilidad} 
+              value={designUpgrades.reliability} 
               cost={getCost(false)} 
-              onIncrement={() => handleIncrement('design', 'fiabilidad')}
-              onDecrement={() => handleDecrement('design', 'fiabilidad')}
+              onIncrement={() => handleIncrement('design', 'reliability')}
+              onDecrement={() => handleDecrement('design', 'reliability')}
             />
           </div>
         </Card>
@@ -129,10 +163,10 @@ const CarDashboard = () => {
             />
             <UpgradeRow 
               label="Fiabilidad" 
-              value={researchUpgrades.fiabilidad} 
+              value={researchUpgrades.reliability} 
               cost={getCost(true)} 
-              onIncrement={() => handleIncrement('research', 'fiabilidad')}
-              onDecrement={() => handleDecrement('research', 'fiabilidad')}
+              onIncrement={() => handleIncrement('research', 'reliability')}
+              onDecrement={() => handleDecrement('research', 'reliability')}
             />
           </div>
         </Card>
@@ -165,10 +199,10 @@ const CarDashboard = () => {
           
           <Button 
             onClick={handleSubmit} 
-            disabled={!canSave}
+            disabled={!canSave || isLoading}
             className={styles.saveBtn}
           >
-            Confirmar Mejoras
+            {isLoading ? 'Procesando...' : 'Confirmar Mejoras'}
           </Button>
         </div>
       </div>
