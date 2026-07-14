@@ -167,3 +167,105 @@ export const submitCarRequest = async (teamId: string, seasonId: string, mode: '
     return false;
   }
 };
+
+import { Engine, EngineRequest } from '../types';
+
+export const getAllEngines = async (): Promise<Engine[]> => {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'lfm_teamEngines'));
+    const engines: Engine[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      engines.push({
+        teamId: doc.id,
+        power: data.power || 0,
+        reliability: data.reliability || 0
+      });
+    });
+    return engines;
+  } catch (error) {
+    console.error("Error fetching all engines:", error);
+    return [];
+  }
+};
+
+export const updateEngineStat = async (teamId: string, statId: 'power' | 'reliability', newValue: number): Promise<boolean> => {
+  try {
+    const engineRef = doc(db, 'lfm_teamEngines', teamId);
+    await updateDoc(engineRef, {
+      [statId]: newValue
+    });
+    return true;
+  } catch (error) {
+    console.error("Error updating engine stat:", error);
+    return false;
+  }
+};
+
+export const subscribeToEngineRequests = (callback: (requests: EngineRequest[]) => void) => {
+  const q = collection(db, 'lfm_carSelections'); // requests are stored in carSelections
+  return onSnapshot(q, (snapshot) => {
+    let allRequests: EngineRequest[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.engineRequests && Array.isArray(data.engineRequests)) {
+        allRequests = [...allRequests, ...data.engineRequests.filter((r: any) => r.status === 'pending')];
+      }
+    });
+    allRequests.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    callback(allRequests);
+  }, (error) => {
+    console.error("Error subscribing to engine requests:", error);
+  });
+};
+
+export const submitEngineRequest = async (teamId: string, seasonId: string, statId: 'power' | 'reliability', mode: string, note: string): Promise<boolean> => {
+  try {
+    const selectionRef = doc(db, 'lfm_carSelections', teamId);
+    const snap = await getDoc(selectionRef);
+    
+    const newRequest: EngineRequest = {
+      id: Math.random().toString(36).substring(2, 9),
+      seasonId,
+      teamId,
+      statId,
+      mode,
+      note,
+      status: 'pending',
+      createdAt: Date.now()
+    };
+
+    if (snap.exists()) {
+      const data = snap.data();
+      const requests = data.engineRequests || [];
+      await updateDoc(selectionRef, { engineRequests: [...requests, newRequest] });
+    } else {
+      await setDoc(selectionRef, { engineRequests: [newRequest] }, { merge: true });
+    }
+    return true;
+  } catch (error) {
+    console.error("Error submitting engine request:", error);
+    return false;
+  }
+};
+
+export const resolveEngineRequest = async (teamId: string, requestId: string, newStatus: 'approved' | 'rejected'): Promise<boolean> => {
+  try {
+    const selectionRef = doc(db, 'lfm_carSelections', teamId);
+    const snap = await getDoc(selectionRef);
+    if (!snap.exists()) return false;
+
+    const data = snap.data();
+    if (!data.engineRequests) return false;
+
+    const updatedRequests = data.engineRequests.map((r: any) => 
+      r.id === requestId ? { ...r, status: newStatus } : r
+    );
+
+    await updateDoc(selectionRef, { engineRequests: updatedRequests });
+    return true;
+  } catch (error) {
+    console.error("Error resolving engine request:", error);
+    return false;
+  }
+};

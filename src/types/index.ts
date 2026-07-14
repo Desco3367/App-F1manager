@@ -27,3 +27,20 @@ export interface CarRequest {
   createdAt: number;
 }
 
+export interface Engine {
+  teamId: string;
+  power: number;
+  reliability: number;
+}
+
+export interface EngineRequest {
+  id: string;
+  seasonId: string;
+  teamId: string;
+  statId: 'power' | 'reliability';
+  mode: string;
+  note: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+}
+
