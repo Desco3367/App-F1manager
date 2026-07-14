@@ -353,3 +353,83 @@ export const resolveTransferRequest = async (requestId: string, newStatus: 'appr
     return false;
   }
 };
+
+import { WeightRequest } from '../types';
+
+export const subscribeToWeightRequests = (callback: (requests: WeightRequest[]) => void) => {
+  const q = collection(db, 'lfm_carSelections');
+  return onSnapshot(q, (snapshot) => {
+    let allRequests: WeightRequest[] = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.weightRequests && Array.isArray(data.weightRequests)) {
+        allRequests = [...allRequests, ...data.weightRequests.filter((r: any) => r.status === 'pending')];
+      }
+    });
+    allRequests.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    callback(allRequests);
+  }, (error) => {
+    console.error("Error subscribing to weight requests:", error);
+  });
+};
+
+export const submitWeightRequest = async (teamId: string, seasonId: string, pieceId: string, runs: number, note: string): Promise<boolean> => {
+  try {
+    const selectionRef = doc(db, 'lfm_carSelections', teamId);
+    const snap = await getDoc(selectionRef);
+    
+    const newRequest: WeightRequest = {
+      id: Math.random().toString(36).substring(2, 9),
+      seasonId,
+      teamId,
+      pieceId,
+      runs,
+      note,
+      status: 'pending',
+      createdAt: Date.now()
+    };
+
+    if (snap.exists()) {
+      const data = snap.data();
+      const requests = data.weightRequests || [];
+      await updateDoc(selectionRef, { weightRequests: [...requests, newRequest] });
+    } else {
+      await setDoc(selectionRef, { weightRequests: [newRequest] }, { merge: true });
+    }
+    return true;
+  } catch (error) {
+    console.error("Error submitting weight request:", error);
+    return false;
+  }
+};
+
+export const resolveWeightRequest = async (teamId: string, requestId: string, newStatus: 'approved' | 'rejected', newLevel?: number, pieceId?: string): Promise<boolean> => {
+  try {
+    const selectionRef = doc(db, 'lfm_carSelections', teamId);
+    const snap = await getDoc(selectionRef);
+    if (!snap.exists()) return false;
+
+    const data = snap.data();
+    if (!data.weightRequests) return false;
+
+    const updatedRequests = data.weightRequests.map((r: any) => 
+      r.id === requestId ? { ...r, status: newStatus } : r
+    );
+
+    await updateDoc(selectionRef, { weightRequests: updatedRequests });
+
+    if (newStatus === 'approved' && newLevel !== undefined && pieceId) {
+      const carRef = doc(db, 'lfm_teamCars', teamId);
+      await setDoc(carRef, {
+        weightLevels: {
+          [pieceId]: newLevel
+        }
+      }, { merge: true });
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error resolving weight request:", error);
+    return false;
+  }
+};

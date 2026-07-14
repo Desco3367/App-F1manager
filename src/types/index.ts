@@ -13,6 +13,18 @@ export interface Car {
   chassis: number;
   reliability: number;
   weight: number;
+  weightLevels?: Record<string, number>;
+}
+
+export interface WeightRequest {
+  id: string;
+  seasonId: string;
+  teamId: string;
+  pieceId: string;
+  runs: number;
+  note: string;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
 }
 
 export interface CarRequest {
